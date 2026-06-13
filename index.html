@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Couples Therapy — Vessel Log</title>
+
+  <!--
+    ============================================================
+    COUPLES THERAPY — VESSEL LOG
+    ============================================================
+    2021 Cutwater 30 Sedan | Volvo Penta D6-435I-F
+    HIN: FML30C07J021
+
+    A single-file web app for logging fuel, maintenance, trips,
+    waste pumpouts, systems checks, and general notes.
+
+    HOW THIS FILE WORKS
+    -------------------
+    This is a self-contained HTML file. It has no dependencies
+    on any server or database. All data is saved in your
+    browser's localStorage — the same mechanism websites use
+    to remember your preferences. Data persists between visits
+    on the same device/browser.
+
+    TO DEPLOY ON GITHUB PAGES
+    -------------------------
+    1. Create a new GitHub repository (e.g. "couples-therapy-log")
+    2. Upload this file as "index.html" to the repository root
+    3. Go to Settings → Pages → Source → Deploy from branch → main
+    4. Your log will be live at:
+       https://YOUR-USERNAME.github.io/couples-therapy-log/
+
+    TO BACK UP YOUR DATA
+    --------------------
+    Use the "Export CSV" button in the Summary tab. Do this
+    periodically — if you clear your browser data, localStorage
+    goes with it.
+
+    STRUCTURE OF THIS FILE
+    ----------------------
+    1. <style>     — All visual styling (CSS)
+    2. <body>      — The HTML layout and structure
+    3. <script>    — All application logic (JavaScript)
+       a. Storage     — Load/save to localStorage
+       b. Rendering   — Functions that draw each tab
+       c. Entry forms — Dynamic form fields per entry type
+       d. Export      — CSV export
+    ============================================================
+  -->
+
+  <style>
+    /* ── Reset & base ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:      #1a2b3c;
+      --navy-mid:  #2c4a63;
+      --teal:      #2a7a6f;
+      --teal-lt:   #3d9e91;
+      --teal-bg:   #e8f5f3;
+      --amber:     #c07a2a;
+      --amber-bg:  #fdf3e3;
+      --red-bg:    #fdecea;
+      --red-text:  #8b2020;
+      --sand:      #f4f1ea;
+      --sand-dark: #e8e3d8;
+      --text-pri:  #1a2b3c;
+      --text-sec:  #4a6070;
+      --text-hint: #7a8f9e;
+      --border:    #d0dae2;
+      --border-lt: #e8eef2;
+      --white:     #ffffff;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --shadow-sm: 0 1px 3px rgba(26,43,60,0.08);
+      --shadow-md: 0 4px 12px rgba(26,43,60,0.10);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--text-pri);
+      background: var(--sand);
+      min-height: 100vh;
+    }
+
+    /* ── Header / nav ─────────────────────────────────────── */
+    .site-header {
+      background: var(--navy);
+      color: white;
+      padding: 0 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-md);
+    }
+
+    .header-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.9rem 0;
+    }
+
+    .vessel-name {
+      font-size: 1.2rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: white;
+    }
+
+    .vessel-name span {
+      color: var(--teal-lt);
+    }
+
+    .vessel-meta {
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.55);
+      margin-top: 1px;
+    }
+
+    .hours-display {
+      text-align: right;
+    }
+
+    .hours-value {
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: var(--teal-lt);
+    }
+
+    .hours-label {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.5);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Tab nav ──────────────────────────────────────────── */
+    .tab-nav {
+      background: var(--navy-mid);
+      padding: 0 1.5rem;
+    }
+
+    .tab-nav-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      gap: 0;
+    }
+
+    .tab-btn {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      background: none;
+      color: rgba(255,255,255,0.6);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+
+    .tab-btn:hover { color: rgba(255,255,255,0.9); }
+
+    .tab-btn.active {
+      color: white;
+      border-bottom-color: var(--teal-lt);
+    }
+
+    /* ── Main content ─────────────────────────────────────── */
+    .main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards ────────────────────────────────────────────── */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--border-lt);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .card + .card { margin-top: 1rem; }
+
+    /* ── Stat grid ────────────────────────────────────────── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .stat-card {
+      background: var(--white);
+      border: 1px solid var(--border-lt);
+      border-radius: var(--radius-md);
+      padding: 0.9rem 1rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-label {
+      font-size: 0.72rem;
+      color: var(--text-hint);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--navy);
+      line-height: 1.1;
+    }
+
+    .stat-unit {
+      font-size: 0.85rem;
+      font-weight: 400;
+      color: var(--text-hint);
+    }
+
+    /* ── Log list ─────────────────────────────────────────── */
+    .filter-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .filter-btn {
+      padding: 4px 12px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--white);
+      color: var(--text-sec);
+      transition: all 0.12s;
+    }
+
+    .filter-btn:hover { background: var(--sand); }
+
+    .filter-btn.active {
+      background: var(--navy);
+      color: white;
+      border-color: var(--navy);
+    }
+
+    .log-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .log-item {
+      background: var(--white);
+      border: 1px solid var(--border-lt);
+      border-radius: var(--radius-md);
+      padding: 0.85rem 1rem;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.12s;
+    }
+
+    .log-item:hover { border-color: var(--border); }
+
+    .log-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .log-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--navy);
+      flex: 1;
+      min-width: 120px;
+    }
+
+    .log-meta {
+      font-size: 0.78rem;
+      color: var(--text-hint);
+      white-space: nowrap;
+    }
+
+    .log-detail {
+      font-size: 0.8rem;
+      color: var(--text-sec);
+      margin-top: 5px;
+      padding-top: 5px;
+      border-top: 1px solid var(--border-lt);
+    }
+
+    .log-notes {
+      font-size: 0.78rem;
+      color: var(--text-hint);
+      margin-top: 4px;
+      font-style: italic;
+    }
+
+    /* ── Entry type badges ────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .badge-fuel        { background: #dbeafe; color: #1e3a8a; }
+    .badge-waste       { background: #dcfce7; color: #14532d; }
+    .badge-maintenance { background: #fef3c7; color: #78350f; }
+    .badge-trip        { background: #ede9fe; color: #3b0764; }
+    .badge-systems     { background: #ccfbf1; color: #134e4a; }
+    .badge-note        { background: #f1f5f9; color: #334155; }
+
+    /* ── New entry form ───────────────────────────────────── */
+    .type-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 1.25rem;
+    }
+
+    .type-btn {
+      padding: 0.75rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      background: var(--white);
+      color: var(--text-sec);
+      font-size: 0.82rem;
+      font-weight: 500;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.12s;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .type-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+    .type-btn:hover { background: var(--sand); border-color: var(--teal); color: var(--teal); }
+
+    .type-btn.selected {
+      background: var(--navy);
+      border-color: var(--navy);
+      color: white;
+      box-shadow: var(--shadow-md);
+    }
+
+    /* ── Form fields ──────────────────────────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.9rem;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group.full { grid-column: 1 / -1; }
+
+    label {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-sec);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--white);
+      color: var(--text-pri);
+      font-size: 0.9rem;
+      font-family: inherit;
+      transition: border-color 0.12s, box-shadow 0.12s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(42,122,111,0.12);
+    }
+
+    textarea { resize: vertical; min-height: 75px; }
+
+    .btn-save {
+      width: 100%;
+      margin-top: 1rem;
+      padding: 0.7rem 1rem;
+      background: var(--teal);
+      color: white;
+      border: none;
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s;
+      letter-spacing: 0.01em;
+    }
+
+    .btn-save:hover { background: var(--teal-lt); }
+
+    /* ── Maintenance schedule ─────────────────────────────── */
+    .maint-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .maint-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.85rem 1rem;
+      background: var(--white);
+      border: 1px solid var(--border-lt);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .maint-task {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--navy);
+    }
+
+    .maint-info {
+      font-size: 0.75rem;
+      color: var(--text-hint);
+      margin-top: 2px;
+    }
+
+    .due-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .due-ok   { background: #dcfce7; color: #14532d; }
+    .due-soon { background: #fef3c7; color: #78350f; }
+    .due-now  { background: #fee2e2; color: #7f1d1d; }
+
+    /* ── Toast notification ───────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: var(--navy);
+      color: white;
+      padding: 0.65rem 1.1rem;
+      border-radius: var(--radius-md);
+      font-size: 0.85rem;
+      font-weight: 500;
+      box-shadow: var(--shadow-md);
+      transform: translateY(20px);
+      opacity: 0;
+      transition: all 0.2s ease;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ── Summary chart ────────────────────────────────────── */
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 240px;
+      margin-top: 0.75rem;
+    }
+
+    .section-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-hint);
+      margin-bottom: 0.75rem;
+    }
+
+    /* ── Utility ──────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 2.5rem 1rem;
+      color: var(--text-hint);
+      font-size: 0.9rem;
+    }
+
+    .btn-export {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--white);
+      color: var(--text-sec);
+      transition: all 0.12s;
+    }
+
+    .btn-export:hover { background: var(--sand); border-color: var(--navy); color: var(--navy); }
+
+    .summary-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 1rem;
+    }
+
+    /* ── Responsive ───────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .form-group.full { grid-column: 1; }
+      .type-grid { grid-template-columns: repeat(2, 1fr); }
+      .header-inner { flex-direction: column; align-items: flex-start; gap: 4px; }
+      .hours-display { text-align: left; }
+      .main { padding: 1rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ── Site header ──────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div>
+        <div class="vessel-name">⚓ <span>Couples Therapy</span></div>
+        <div class="vessel-meta">2021 Cutwater 30 · Volvo Penta D6-435I-F · HIN FML30C07J021</div>
+      </div>
+      <div class="hours-display">
+        <div class="hours-value" id="hdr-hours">—</div>
+        <div class="hours-label">engine hours</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Tab navigation ───────────────────────────────────── -->
+  <nav class="tab-nav" aria-label="Log sections">
+    <div class="tab-nav-inner">
+      <button class="tab-btn active" onclick="showTab('log')"     aria-controls="tab-log">Log</button>
+      <button class="tab-btn"        onclick="showTab('new')"     aria-controls="tab-new">New entry</button>
+      <button class="tab-btn"        onclick="showTab('maint')"   aria-controls="tab-maint">Maintenance</button>
+      <button class="tab-btn"        onclick="showTab('summary')" aria-controls="tab-summary">Summary</button>
+    </div>
+  </nav>
+
+  <!-- ── Main content ─────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- LOG TAB -->
+    <section class="tab-panel active" id="tab-log" role="tabpanel">
+      <div class="filter-row" id="filter-row">
+        <button class="filter-btn active" onclick="setFilter('all',   this)">All</button>
+        <button class="filter-btn"        onclick="setFilter('fuel',  this)">Fuel</button>
+        <button class="filter-btn"        onclick="setFilter('waste', this)">Waste</button>
+        <button class="filter-btn"        onclick="setFilter('maintenance', this)">Maintenance</button>
+        <button class="filter-btn"        onclick="setFilter('trip',  this)">Trips</button>
+        <button class="filter-btn"        onclick="setFilter('systems', this)">Systems</button>
+        <button class="filter-btn"        onclick="setFilter('note',  this)">Notes</button>
+      </div>
+      <div class="log-list" id="log-list"></div>
+    </section>
+
+    <!-- NEW ENTRY TAB -->
+    <section class="tab-panel" id="tab-new" role="tabpanel">
+      <div class="type-grid" id="type-grid">
+        <!-- Entry type buttons — icons are inline SVG for zero external dependency -->
+        <button class="type-btn selected" onclick="selectType('fuel', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 22V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M3 22h12M13 8h2a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L19 6"/><line x1="7" y1="22" x2="7" y2="12"/><rect x="5" y="12" width="4" height="4"/></svg>
+          Fuel
+        </button>
+        <button class="type-btn" onclick="selectType('waste', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.62"/><path d="M12 7v5l3 3"/></svg>
+          Waste pumpout
+        </button>
+        <button class="type-btn" onclick="selectType('maintenance', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Maintenance
+        </button>
+        <button class="type-btn" onclick="selectType('trip', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          Trip log
+        </button>
+        <button class="type-btn" onclick="selectType('systems', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          Systems check
+        </button>
+        <button class="type-btn" onclick="selectType('note', this)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Note
+        </button>
+      </div>
+
+      <div class="card" id="entry-form-wrap">
+        <!-- Dynamically populated by renderForm() -->
+      </div>
+
+      <button class="btn-save" onclick="saveEntry()">Save entry</button>
+    </section>
+
+    <!-- MAINTENANCE TAB -->
+    <section class="tab-panel" id="tab-maint" role="tabpanel">
+      <p style="font-size:0.82rem;color:var(--text-hint);margin-bottom:1rem">
+        Volvo Penta D6-435I-F service intervals. Hours are drawn from your most recent logged entry.
+        Items within 30 hours of due are highlighted.
+      </p>
+      <div class="maint-list" id="maint-list"></div>
+    </section>
+
+    <!-- SUMMARY TAB -->
+    <section class="tab-panel" id="tab-summary" role="tabpanel">
+      <div class="stat-grid" id="summary-stats"></div>
+
+      <div class="card" style="margin-bottom:1rem">
+        <div class="section-title">Maintenance spend by provider</div>
+        <div class="chart-wrap">
+          <canvas id="spend-chart"
+            role="img"
+            aria-label="Bar chart of maintenance spend by service provider">
+            Maintenance spend chart — enable JavaScript to view.
+          </canvas>
+        </div>
+      </div>
+
+      <div class="summary-actions">
+        <button class="btn-export" onclick="exportCSV()">Export CSV</button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ── Toast notification ───────────────────────────────── -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- ── Chart.js (loaded from CDN) ───────────────────────── -->
+  <!--
+    Chart.js renders the maintenance spend bar chart.
+    If you're offline, the chart simply won't render —
+    everything else in the app works without internet.
+  -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+  <script>
+    /*
+    ============================================================
+    APPLICATION LOGIC
+    ============================================================
+    Everything below is plain JavaScript — no frameworks,
+    no build tools, no dependencies beyond Chart.js above.
+
+    KEY CONCEPTS FOR THE BUDDING DEVELOPER
+    ---------------------------------------
+    - "const" declares a variable that won't be reassigned
+    - "let" declares a variable that might be reassigned
+    - Arrow functions: (x) => x + 1  is the same as  function(x){ return x+1; }
+    - Template literals: `Hello ${name}` — backtick strings that can embed expressions
+    - localStorage: browser key/value store, survives page refresh
+    - JSON.stringify / JSON.parse: converts between JS objects and plain text for storage
+    ============================================================
+    */
+
+    // ── Storage key ──────────────────────────────────────────
+    // Change this if you ever need to reset all data cleanly
+    const STORAGE_KEY = 'ct_vessel_log_v1';
+
+    // ── Application state ────────────────────────────────────
+    let entries    = [];        // All log entries
+    let entryType  = 'fuel';    // Currently selected entry type
+    let logFilter  = 'all';     // Currently active log filter
+    let spendChart = null;      // Chart.js instance (kept so we can destroy before re-render)
+
+    // ── Human-readable type labels ───────────────────────────
+    const TYPE_LABELS = {
+      fuel:        'Fuel',
+      waste:       'Waste pumpout',
+      maintenance: 'Maintenance',
+      trip:        'Trip log',
+      systems:     'Systems check',
+      note:        'Note',
+    };
+
+    // ──────────────────────────────────────────────────────────
+    // STORAGE — Load and save entries to localStorage
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * Load entries from localStorage.
+     * Starts empty on first visit — add your entries manually.
+     */
+    function loadEntries() {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        // Parse the JSON string back into a JavaScript array
+        entries = JSON.parse(stored);
+      }
+      // No seed data — log starts empty and you fill it in
+      renderAll();
+    }
+
+    /**
+     * Save the current entries array to localStorage.
+     * Called after every add/delete operation.
+     */
+    function persistEntries() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // NAVIGATION — Tab switching
+    // ──────────────────────────────────────────────────────────
+
+    function showTab(name) {
+      // Hide all panels, deactivate all tab buttons
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+      // Show the selected panel and activate its button
+      document.getElementById('tab-' + name).classList.add('active');
+      // Find the button that calls showTab(name) and activate it
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        if (b.getAttribute('onclick') === `showTab('${name}')`) {
+          b.classList.add('active');
+        }
+      });
+
+      // Render tab-specific content
+      if (name === 'maint')   renderMaintenance();
+      if (name === 'summary') renderSummary();
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // ENTRY FORMS — Dynamic form fields per entry type
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * Called when user clicks a type button (Fuel, Waste, etc.)
+     */
+    function selectType(type, btn) {
+      entryType = type;
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      renderForm();
+    }
+
+    /**
+     * Builds the form fields for the currently selected entry type.
+     * Uses template literals to construct HTML strings.
+     */
+    function renderForm() {
+      const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
+      const wrap  = document.getElementById('entry-form-wrap');
+
+      // Common fields every entry type shares
+      let html = `<div class="form-grid">
+        <div class="form-group">
+          <label for="f-date">Date</label>
+          <input type="date" id="f-date" value="${today}" />
+        </div>
+        <div class="form-group">
+          <label for="f-location">Location / marina</label>
+          <input type="text" id="f-location" placeholder="e.g. Port Townsend Marina" />
+        </div>`;
+
+      // Type-specific fields
+      if (entryType === 'fuel') {
+        html += `
+          <div class="form-group">
+            <label for="f-gallons">Gallons added</label>
+            <input type="number" id="f-gallons" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-pricegal">Price per gallon ($)</label>
+            <input type="number" id="f-pricegal" placeholder="0.00" step="0.01" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-hours">Engine hours at fill</label>
+            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-levelbefore">Tank level before fill (%)</label>
+            <input type="number" id="f-levelbefore" placeholder="e.g. 40" min="0" max="100" />
+          </div>
+          <div class="form-group full">
+            <label for="f-notes">Notes</label>
+            <textarea id="f-notes" placeholder="Station, pump number, observations..."></textarea>
+          </div>`;
+
+      } else if (entryType === 'waste') {
+        html += `
+          <div class="form-group">
+            <label for="f-gallons">Gallons pumped</label>
+            <input type="number" id="f-gallons" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-cost">Cost ($)</label>
+            <input type="number" id="f-cost" placeholder="0.00" step="0.01" min="0" />
+          </div>
+          <div class="form-group full">
+            <label for="f-notes">Notes</label>
+            <textarea id="f-notes" placeholder="Station, any issues..."></textarea>
+          </div>`;
+
+      } else if (entryType === 'maintenance') {
+        html += `
+          <div class="form-group">
+            <label for="f-hours">Engine hours</label>
+            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-system">System</label>
+            <select id="f-system">
+              <option>Engine</option>
+              <option>Electrical</option>
+              <option>Hull / deck</option>
+              <option>Plumbing</option>
+              <option>Steering</option>
+              <option>Electronics</option>
+              <option>Fuel system</option>
+              <option>Victron / batteries</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label for="f-task">Task performed</label>
+            <input type="text" id="f-task" placeholder="e.g. Engine oil and filter change" />
+          </div>
+          <div class="form-group">
+            <label for="f-who">Performed by</label>
+            <select id="f-who">
+              <option>Owner</option>
+              <option>Gig Harbor Marina</option>
+              <option>ReVolt Marine Systems</option>
+              <option>Volvo Penta dealer</option>
+              <option>Other yard / contractor</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="f-cost">Cost ($)</label>
+            <input type="number" id="f-cost" placeholder="0.00" step="0.01" min="0" />
+          </div>
+          <div class="form-group full">
+            <label for="f-parts">Parts / fluids used</label>
+            <input type="text" id="f-parts" placeholder="e.g. Volvo Penta OEM oil filter, 9 qts 15W-40" />
+          </div>
+          <div class="form-group">
+            <label for="f-nextdue">Next service due (engine hrs)</label>
+            <input type="number" id="f-nextdue" placeholder="e.g. 400" step="1" min="0" />
+          </div>
+          <div class="form-group full">
+            <label for="f-notes">Notes</label>
+            <textarea id="f-notes" placeholder="Findings, observations, anything to watch..."></textarea>
+          </div>`;
+
+      } else if (entryType === 'trip') {
+        html += `
+          <div class="form-group">
+            <label for="f-from">Departure point</label>
+            <input type="text" id="f-from" placeholder="e.g. Bremerton Marina" />
+          </div>
+          <div class="form-group">
+            <label for="f-to">Destination</label>
+            <input type="text" id="f-to" placeholder="e.g. Friday Harbor" />
+          </div>
+          <div class="form-group">
+            <label for="f-hrsstart">Engine hours — start</label>
+            <input type="number" id="f-hrsstart" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-hrsend">Engine hours — end</label>
+            <input type="number" id="f-hrsend" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-distance">Distance (nm)</label>
+            <input type="number" id="f-distance" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-fuelused">Fuel used (gal)</label>
+            <input type="number" id="f-fuelused" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-crew">Crew</label>
+            <input type="text" id="f-crew" placeholder="Names aboard" />
+          </div>
+          <div class="form-group">
+            <label for="f-sea">Sea state</label>
+            <select id="f-sea">
+              <option>Calm</option>
+              <option>Light chop</option>
+              <option>Moderate</option>
+              <option>Rough</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label for="f-notes">Notes / waypoints / highlights</label>
+            <textarea id="f-notes" placeholder="Route, anchorages, observations, highlights..."></textarea>
+          </div>`;
+
+      } else if (entryType === 'systems') {
+        html += `
+          <div class="form-group">
+            <label for="f-hours">Engine hours</label>
+            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-voltage">House bank voltage (V)</label>
+            <input type="number" id="f-voltage" placeholder="12.6" step="0.01" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-soc">House bank SOC (%)</label>
+            <input type="number" id="f-soc" placeholder="100" step="1" min="0" max="100" />
+          </div>
+          <div class="form-group">
+            <label for="f-bilge">Bilge status</label>
+            <select id="f-bilge">
+              <option>Dry</option>
+              <option>Minor moisture</option>
+              <option>Pumped — investigate</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="f-fuellevel">Fuel level (%)</label>
+            <input type="number" id="f-fuellevel" placeholder="0–100" step="1" min="0" max="100" />
+          </div>
+          <div class="form-group">
+            <label for="f-freshwater">Fresh water (%)</label>
+            <input type="number" id="f-freshwater" placeholder="0–100" step="1" min="0" max="100" />
+          </div>
+          <div class="form-group full">
+            <label for="f-notes">Observations</label>
+            <textarea id="f-notes" placeholder="Any issues, leaks, or items to watch..."></textarea>
+          </div>`;
+
+      } else {
+        // General note
+        html += `
+          <div class="form-group full">
+            <label for="f-notes">Note</label>
+            <textarea id="f-notes" placeholder="Anchoring spot, weather, incident, observation..."></textarea>
+          </div>`;
+      }
+
+      html += '</div>'; // close .form-grid
+      wrap.innerHTML = html;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // HELPERS — Read form values
+    // ──────────────────────────────────────────────────────────
+
+    /** Get a text value from a form field, or empty string if missing */
+    function fv(id) {
+      const el = document.getElementById(id);
+      return el ? el.value.trim() : '';
+    }
+
+    /** Get a numeric value from a form field, or null if empty/invalid */
+    function fn(id) {
+      const val = parseFloat(fv(id));
+      return isNaN(val) ? null : val;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // SAVE ENTRY — Collect form data and store
+    // ──────────────────────────────────────────────────────────
+
+    function saveEntry() {
+      // Build the base entry object — fields common to all types
+      const entry = {
+        id:       Date.now(), // Unix timestamp as a unique ID
+        type:     entryType,
+        date:     fv('f-date') || new Date().toISOString().split('T')[0],
+        location: fv('f-location'),
+        notes:    fv('f-notes'),
+      };
+
+      // Add type-specific fields
+      if (entryType === 'fuel') {
+        entry.gallons      = fn('f-gallons');
+        entry.pricePerGal  = fn('f-pricegal');
+        entry.hours        = fn('f-hours');
+        entry.levelBefore  = fn('f-levelbefore');
+        // Auto-calculate total cost if both values are present
+        entry.totalCost = (entry.gallons && entry.pricePerGal)
+          ? parseFloat((entry.gallons * entry.pricePerGal).toFixed(2))
+          : null;
+      }
+
+      if (entryType === 'waste') {
+        entry.gallons = fn('f-gallons');
+        entry.cost    = fn('f-cost');
+      }
+
+      if (entryType === 'maintenance') {
+        entry.hours   = fn('f-hours');
+        entry.system  = fv('f-system');
+        entry.task    = fv('f-task');
+        entry.who     = fv('f-who');
+        entry.cost    = fn('f-cost');
+        entry.parts   = fv('f-parts');
+        entry.nextDue = fn('f-nextdue');
+      }
+
+      if (entryType === 'trip') {
+        entry.from     = fv('f-from');
+        entry.to       = fv('f-to');
+        entry.hrsStart = fn('f-hrsstart');
+        entry.hrsEnd   = fn('f-hrsend');
+        entry.distance = fn('f-distance');
+        entry.fuelUsed = fn('f-fuelused');
+        entry.crew     = fv('f-crew');
+        entry.sea      = fv('f-sea');
+      }
+
+      if (entryType === 'systems') {
+        entry.hours      = fn('f-hours');
+        entry.voltage    = fn('f-voltage');
+        entry.soc        = fn('f-soc');
+        entry.bilge      = fv('f-bilge');
+        entry.fuelLevel  = fn('f-fuellevel');
+        entry.freshWater = fn('f-freshwater');
+      }
+
+      // Add to the front of the array (newest first)
+      entries.unshift(entry);
+      persistEntries();
+      renderAll();
+      showToast('Entry saved');
+      renderForm(); // Reset form fields
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // LOG RENDERING — Draw the log list
+    // ──────────────────────────────────────────────────────────
+
+    function setFilter(type, btn) {
+      logFilter = type;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderLog();
+    }
+
+    function renderLog() {
+      const list = document.getElementById('log-list');
+
+      // Sort by date descending (newest first), then filter
+      const sorted   = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+      const filtered = logFilter === 'all'
+        ? sorted
+        : sorted.filter(e => e.type === logFilter);
+
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty-state">No entries yet — add one under "New entry"</div>';
+        return;
+      }
+
+      list.innerHTML = filtered.map(e => {
+        const label = TYPE_LABELS[e.type] || e.type;
+
+        // Build a human-readable title and detail line per type
+        let title  = '';
+        let detail = '';
+
+        if (e.type === 'fuel') {
+          title  = e.gallons ? `${e.gallons} gal diesel` : 'Fuel';
+          detail = [
+            e.pricePerGal ? `$${e.pricePerGal}/gal` : '',
+            e.totalCost   ? `Total $${e.totalCost.toFixed(2)}` : '',
+            e.hours       ? `${e.hours} hrs` : '',
+          ].filter(Boolean).join(' · ');
+        }
+
+        if (e.type === 'waste') {
+          title  = e.gallons ? `${e.gallons} gal pumpout` : 'Waste pumpout';
+          detail = e.cost ? `$${e.cost}` : '';
+        }
+
+        if (e.type === 'maintenance') {
+          title  = e.task || 'Maintenance';
+          detail = [
+            e.system,
+            e.who,
+            e.cost ? `$${e.cost.toLocaleString()}` : '',
+          ].filter(Boolean).join(' · ');
+        }
+
+        if (e.type === 'trip') {
+          title  = (e.from && e.to) ? `${e.from} → ${e.to}` : 'Trip';
+          detail = [
+            e.distance ? `${e.distance} nm` : '',
+            e.sea,
+            e.crew,
+          ].filter(Boolean).join(' · ');
+        }
+
+        if (e.type === 'systems') {
+          title  = 'Systems check';
+          detail = [
+            e.hours   ? `${e.hours} hrs` : '',
+            e.voltage ? `${e.voltage}V` : '',
+            e.soc     ? `${e.soc}% SOC` : '',
+            e.bilge,
+          ].filter(Boolean).join(' · ');
+        }
+
+        if (e.type === 'note') {
+          title  = 'Note';
+          detail = e.notes ? e.notes.substring(0, 90) + (e.notes.length > 90 ? '…' : '') : '';
+        }
+
+        // Truncate long notes for the preview
+        const notePreview = (e.notes && e.type !== 'note' && e.notes.length > 0)
+          ? e.notes.substring(0, 110) + (e.notes.length > 110 ? '…' : '')
+          : '';
+
+        return `<div class="log-item">
+          <div class="log-row">
+            <span class="badge badge-${e.type}">${label}</span>
+            <span class="log-title">${title || label}</span>
+            <span class="log-meta">${e.date}${e.location ? ' · ' + e.location : ''}</span>
+          </div>
+          ${detail    ? `<div class="log-detail">${detail}</div>` : ''}
+          ${notePreview ? `<div class="log-notes">${notePreview}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // ENGINE HOURS — Find the highest logged hours value
+    // ──────────────────────────────────────────────────────────
+
+    function getLatestHours() {
+      let best = null;
+      entries.forEach(e => {
+        const h = e.hours || e.hrsEnd || null;
+        if (h !== null && (best === null || h > best)) best = h;
+      });
+      return best;
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MAINTENANCE SCHEDULE — Volvo Penta D6-435I-F intervals
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * Volvo Penta service schedule (from Service Protocol document).
+     * interval: hours between services
+     * type: A/B/C/D service classification
+     * keyword: matched against maintenance entry task text
+     */
+    const MAINT_SCHEDULE = [
+      // Type A — every 200 hrs / 12 months
+      { task: 'Engine oil & oil filters',          interval: 200,  type: 'A', keyword: 'oil'          },
+      { task: 'Air filter',                         interval: 200,  type: 'A', keyword: 'air filter'   },
+      { task: 'Fuel pre-filter & fine filter',      interval: 200,  type: 'A', keyword: 'fuel filter'  },
+      { task: 'Seawater filter (clean)',             interval: 200,  type: 'A', keyword: 'seawater filter' },
+      { task: 'Anode / protection system',          interval: 200,  type: 'A', keyword: 'anode'        },
+      { task: 'Drive belts inspection',             interval: 200,  type: 'A', keyword: 'belt'         },
+      { task: 'Transmission oil & filter',          interval: 200,  type: 'A', keyword: 'transmission' },
+      { task: 'Impeller inspection',                interval: 200,  type: 'A', keyword: 'impeller'     },
+      // Type B — every 400 hrs / 24 months
+      { task: 'Impeller replacement',               interval: 400,  type: 'B', keyword: 'impeller'     },
+      // Type C/D — every 800 hrs / 48 months (inboard)
+      { task: 'Exhaust hose replacement',           interval: 800,  type: 'C', keyword: 'exhaust hose' },
+      { task: 'Drive belts replacement',            interval: 800,  type: 'C', keyword: 'belt'         },
+      { task: 'Compressor oil',                     interval: 800,  type: 'C', keyword: 'compressor'   },
+      // Type D/E — every 2000 hrs (inboard)
+      { task: 'Coolant replacement',                interval: 2000, type: 'D', keyword: 'coolant'      },
+      { task: 'Seawater pump overhaul',             interval: 2000, type: 'D', keyword: 'seawater pump'},
+    ];
+
+    function renderMaintenance() {
+      const currentHours = getLatestHours() || 0;
+      const maintEntries = entries.filter(e => e.type === 'maintenance');
+
+      /**
+       * Find the highest engine hours at which a given task was last performed.
+       * Matches by keyword in the task field (case-insensitive).
+       */
+      function lastServiceHours(keyword) {
+        const matches = maintEntries.filter(e =>
+          e.task && e.task.toLowerCase().includes(keyword.toLowerCase()) && e.hours
+        );
+        if (!matches.length) return null;
+        return Math.max(...matches.map(e => e.hours));
+      }
+
+      const list = document.getElementById('maint-list');
+
+      list.innerHTML = MAINT_SCHEDULE.map(item => {
+        const lastAt    = lastServiceHours(item.keyword) || 0;
+        const dueAt     = lastAt + item.interval;
+        const remaining = Math.round(dueAt - currentHours);
+
+        let badgeClass = 'due-ok';
+        let badgeText  = `${remaining} hrs`;
+        if (remaining <= 0)  { badgeClass = 'due-now';  badgeText = 'Due now'; }
+        else if (remaining <= 30) { badgeClass = 'due-soon'; }
+
+        return `<div class="maint-item">
+          <div>
+            <div class="maint-task">${item.task}</div>
+            <div class="maint-info">
+              Every ${item.interval} hrs · Type ${item.type}
+              ${lastAt ? ` · Last at ${lastAt} hrs` : ' · No record in log'}
+            </div>
+          </div>
+          <span class="due-badge ${badgeClass}">${badgeText}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // SUMMARY TAB — Stats and chart
+    // ──────────────────────────────────────────────────────────
+
+    function renderSummary() {
+      const hrs        = getLatestHours();
+      const maintItems = entries.filter(e => e.type === 'maintenance' && e.cost);
+      const totalMaint = maintItems.reduce((sum, e) => sum + e.cost, 0);
+      const totalNm    = entries.filter(e => e.type === 'trip' && e.distance)
+                                .reduce((sum, e) => sum + e.distance, 0);
+      const totalFuel  = entries.filter(e => e.type === 'fuel' && e.gallons)
+                                .reduce((sum, e) => sum + e.gallons, 0);
+      const totalFuelCost = entries.filter(e => e.type === 'fuel' && e.totalCost)
+                                   .reduce((sum, e) => sum + e.totalCost, 0);
+
+      document.getElementById('summary-stats').innerHTML = `
+        <div class="stat-card">
+          <div class="stat-label">Engine hours (known)</div>
+          <div class="stat-value">${hrs != null ? hrs.toFixed(1) : '—'}<span class="stat-unit"> hrs</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Maintenance spend</div>
+          <div class="stat-value">$${Math.round(totalMaint).toLocaleString()}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Service events</div>
+          <div class="stat-value">${maintItems.length}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Distance logged</div>
+          <div class="stat-value">${totalNm.toFixed(1)}<span class="stat-unit"> nm</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Fuel logged</div>
+          <div class="stat-value">${totalFuel.toFixed(1)}<span class="stat-unit"> gal</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Fuel cost</div>
+          <div class="stat-value">$${Math.round(totalFuelCost).toLocaleString()}</div>
+        </div>
+      `;
+
+      renderSpendChart();
+    }
+
+    function renderSpendChart() {
+      // Tally spend by service provider
+      const providerTotals = {};
+      entries
+        .filter(e => e.type === 'maintenance' && e.cost && e.who)
+        .forEach(e => {
+          providerTotals[e.who] = (providerTotals[e.who] || 0) + e.cost;
+        });
+
+      const labels = Object.keys(providerTotals);
+      const data   = labels.map(k => Math.round(providerTotals[k]));
+
+      if (!labels.length) return;
+
+      const canvas = document.getElementById('spend-chart');
+      if (!canvas || typeof Chart === 'undefined') return;
+
+      // Destroy existing chart before re-rendering to avoid memory leaks
+      if (spendChart) { spendChart.destroy(); spendChart = null; }
+
+      spendChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Total spend ($)',
+            data,
+            backgroundColor: ['#B5D4F4', '#9FE1CB', '#FAC775', '#C4B5FD'],
+            borderWidth: 0,
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                font: { size: 11 },
+                callback: v => '$' + v.toLocaleString(),
+              },
+              grid: { color: 'rgba(0,0,0,0.04)' },
+            },
+            x: { ticks: { font: { size: 12 } }, grid: { display: false } },
+          },
+        },
+      });
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // EXPORT — CSV download
+    // ──────────────────────────────────────────────────────────
+
+    function exportCSV() {
+      if (!entries.length) { showToast('Nothing to export yet'); return; }
+
+      // All possible fields across all entry types
+      const fields = [
+        'date', 'type', 'location',
+        'gallons', 'pricePerGal', 'totalCost', 'levelBefore',
+        'hours', 'hrsStart', 'hrsEnd',
+        'task', 'system', 'who', 'cost', 'parts', 'nextDue',
+        'from', 'to', 'distance', 'fuelUsed', 'crew', 'sea',
+        'voltage', 'soc', 'bilge', 'fuelLevel', 'freshWater',
+        'notes',
+      ];
+
+      // Build CSV rows
+      const rows = [
+        fields.join(','), // Header row
+        ...entries.map(e =>
+          fields.map(f => {
+            const val = e[f] ?? '';
+            // Wrap in quotes if the value contains a comma or newline
+            return (typeof val === 'string' && (val.includes(',') || val.includes('\n')))
+              ? `"${val.replace(/"/g, '""')}"` // Escape any internal quotes
+              : val;
+          }).join(',')
+        ),
+      ];
+
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `couples-therapy-log-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('CSV downloaded');
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // TOAST — Brief notification messages
+    // ──────────────────────────────────────────────────────────
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // RENDER ALL — Update all dynamic elements
+    // ──────────────────────────────────────────────────────────
+
+    function renderAll() {
+      const hrs = getLatestHours();
+      document.getElementById('hdr-hours').textContent =
+        hrs != null ? hrs.toFixed(1) : '—';
+      renderLog();
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // INIT — Run on page load
+    // ──────────────────────────────────────────────────────────
+
+    renderForm();  // Draw the default (fuel) form
+    loadEntries(); // Load from localStorage (or seed on first visit)
+
+  </script>
+</body>
+</html>
