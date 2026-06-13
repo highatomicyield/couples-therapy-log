@@ -799,13 +799,11 @@
     const STORAGE_KEY = 'ct_vessel_log_v2';
 
     // ── Application state ────────────────────────────────────
-    let entries    = [];        // All log entries (loaded from Sheet or cache)
-    let entryType  = 'fuel';    // Currently selected entry type in the form
-    let logFilter  = 'all';     // Currently active log filter
-    let spendChart = null;      // Chart.js instance
-    let accessToken = null;     // Google OAuth access token (in memory only, never persisted)
-    let gapiReady   = false;    // Whether the Google API client has loaded
-    let gsiReady    = false;    // Whether Google Identity Services has loaded
+    let entries     = [];    // All log entries (loaded from Sheet or cache)
+    let entryType   = 'fuel'; // Currently selected entry type in the form
+    let logFilter   = 'all';  // Currently active log filter
+    let spendChart  = null;   // Chart.js instance
+    let accessToken = null;   // Google OAuth access token (in memory only, never persisted)
 
     // ── Human-readable type labels ───────────────────────────
     const TYPE_LABELS = {
@@ -821,94 +819,114 @@
     // AUTH — Google OAuth sign-in and sign-out
     // ──────────────────────────────────────────────────────────
     /*
-      Google Identity Services (GIS) handles authentication.
-      The flow:
-        1. User clicks "Sign in with Google"
-        2. Google's popup asks the user to approve access
-        3. On approval, Google calls tokenCallback() with an access token
-        4. We store the token in memory (accessToken variable)
-        5. All Sheets API calls include this token in their headers
-        6. Token expires after ~1 hour — user signs in again if needed
+      The core problem with loading two async Google libraries is
+      that they finish in unpredictable order. The fix is a simple
+      polling loop: check every 200ms until both are ready,
+      then initialize. This is more reliable than onload callbacks
+      chained together.
 
-      The token is NEVER written to localStorage, sessionStorage,
-      or anywhere else persistent. It lives only in the accessToken
-      variable and disappears when the page is closed or refreshed.
+      Flow once both libraries are ready:
+        1. App shows sign-in button
+        2. User clicks it — Google popup opens
+        3. User approves — tokenCallback() fires with access token
+        4. Token stored in memory, Sheets API called, log loads
+        5. Token lives ~1 hour, then user signs in again
     */
 
-    let tokenClient = null; // Google's token client — initialized when GIS loads
+    let tokenClient = null;
+    let gapiReady   = false;
+    let gsiReady    = false;
+    let appStarted  = false;
 
     /**
-     * Called by the Google Identity Services library when it finishes loading.
-     * Sets up the token client that handles the OAuth flow.
+     * Poll until both Google libraries are loaded, then start the app.
+     * Runs every 200ms, gives up after 15 seconds.
      */
-    function initGSI() {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CONFIG.CLIENT_ID,
-        scope:     CONFIG.SCOPES,
-        callback:  tokenCallback,
-      });
-      gsiReady = true;
-      maybeInitApp();
+    function waitForGoogleLibraries() {
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+
+        // Check if gapi is available and load the Sheets client if so
+        if (!gapiReady && typeof gapi !== 'undefined') {
+          gapi.load('client', async () => {
+            try {
+              await gapi.client.load('https://sheets.googleapis.com/$discovery/rest?version=v4');
+              gapiReady = true;
+            } catch(e) {
+              console.error('gapi load error:', e);
+            }
+          });
+        }
+
+        // Check if Google Identity Services is available
+        if (!gsiReady && typeof google !== 'undefined' && google.accounts?.oauth2) {
+          tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CONFIG.CLIENT_ID,
+            scope:     CONFIG.SCOPES,
+            callback:  tokenCallback,
+          });
+          gsiReady = true;
+        }
+
+        // Both ready — start the app
+        if (gapiReady && gsiReady && !appStarted) {
+          appStarted = true;
+          clearInterval(interval);
+          loadFromCache();   // Show cached data immediately
+          showAuthScreen();  // Show sign-in button
+        }
+
+        // Give up after 15 seconds
+        if (attempts > 75) {
+          clearInterval(interval);
+          showToast('Google libraries failed to load — check your connection');
+        }
+      }, 200);
     }
 
     /**
-     * Called when the Google API (gapi) library finishes loading.
-     * Loads the Sheets API client.
-     */
-    function initGAPI() {
-      gapi.load('client', async () => {
-        await gapi.client.init({});
-        await gapi.client.load('https://sheets.googleapis.com/$discovery/rest?version=v4');
-        gapiReady = true;
-        maybeInitApp();
-      });
-    }
-
-    /**
-     * Only start the app once both libraries have loaded.
-     * (They load in parallel and finish in unpredictable order.)
-     */
-    function maybeInitApp() {
-      if (!gapiReady || !gsiReady) return;
-      // Load cached entries immediately so the UI isn't blank
-      loadFromCache();
-      // Show sign-in screen
-      showAuthScreen();
-    }
-
-    /**
-     * Called when the user approves access in Google's popup.
-     * Receives the access token and kicks off a fresh data load.
+     * Called when the user completes the Google sign-in popup.
+     * This is the critical callback — if this doesn't fire, the
+     * user stays stuck on the sign-in screen.
      */
     async function tokenCallback(tokenResponse) {
       if (tokenResponse.error) {
-        showToast('Sign-in failed: ' + tokenResponse.error);
+        showToast('Sign-in error: ' + tokenResponse.error);
         return;
       }
-      // Store token in memory — this is the only place it lives
+
+      // Store token in memory only — never written to disk
       accessToken = tokenResponse.access_token;
       gapi.client.setToken({ access_token: accessToken });
 
-      // Hide auth screen, show the app
+      // Switch from auth screen to app
       document.getElementById('auth-screen').style.display = 'none';
       document.getElementById('app-shell').style.display   = 'block';
-      updateAuthUI(true);
+      document.getElementById('signout-btn').style.display = 'block';
 
-      // Pull fresh data from the Sheet
+      // Load data from Sheet
       await ensureSheetHeaders();
       await loadFromSheet();
     }
 
     /**
-     * Trigger the Google sign-in popup.
+     * Called when user clicks "Sign in with Google".
+     * Opens Google's OAuth popup.
+     * prompt: '' means skip the account picker if already signed in,
+     * which avoids the loop you were experiencing.
      */
     function signIn() {
-      if (!tokenClient) { showToast('Still loading — try again in a moment'); return; }
-      tokenClient.requestAccessToken({ prompt: 'consent' });
+      if (!tokenClient) {
+        showToast('Still loading — try again in a moment');
+        return;
+      }
+      // Use empty prompt so returning users don't see the picker loop
+      tokenClient.requestAccessToken({ prompt: '' });
     }
 
     /**
-     * Sign the user out — clears the token from memory and shows the auth screen.
+     * Sign out and return to the sign-in screen.
      */
     function signOut() {
       if (accessToken) {
@@ -916,20 +934,14 @@
         accessToken = null;
         gapi.client.setToken(null);
       }
-      document.getElementById('auth-screen').style.display = 'flex';
-      document.getElementById('app-shell').style.display   = 'none';
-      updateAuthUI(false);
+      entries = [];
+      renderAll();
+      showAuthScreen();
+      document.getElementById('signout-btn').style.display = 'none';
     }
 
     /**
-     * Update the sign-out button visibility in the header.
-     */
-    function updateAuthUI(signedIn) {
-      document.getElementById('signout-btn').style.display = signedIn ? 'block' : 'none';
-    }
-
-    /**
-     * Show the sign-in screen.
+     * Show the sign-in screen, hide the app.
      */
     function showAuthScreen() {
       document.getElementById('auth-screen').style.display = 'flex';
@@ -1733,14 +1745,9 @@
     // ──────────────────────────────────────────────────────────
     // INIT — Run on page load
     // ──────────────────────────────────────────────────────────
-    /*
-      The Google libraries (gsi/client and api.js) each have an
-      onload attribute in their <script> tags that calls initGSI()
-      and initGAPI() respectively when they finish loading.
-      maybeInitApp() waits until both are ready before proceeding.
-    */
 
-    renderForm(); // Draw the default (fuel) entry form immediately
+    renderForm();              // Draw the default (fuel) entry form
+    waitForGoogleLibraries();  // Start polling for Google libraries
 
   </script>
 </body>
