@@ -17,35 +17,50 @@
 
     HOW THIS FILE WORKS
     -------------------
-    This is a self-contained HTML file. It has no dependencies
-    on any server or database. All data is saved in your
-    browser's localStorage — the same mechanism websites use
-    to remember your preferences. Data persists between visits
-    on the same device/browser.
+    This is a self-contained HTML file. It uses Google Sheets
+    as its backend database, accessed via Google's OAuth 2.0
+    authentication. Data is stored in your Google Sheet and
+    syncs across any device where you sign in.
 
-    TO DEPLOY ON GITHUB PAGES
-    -------------------------
-    1. Create a new GitHub repository (e.g. "couples-therapy-log")
-    2. Upload this file as "index.html" to the repository root
-    3. Go to Settings → Pages → Source → Deploy from branch → main
-    4. Your log will be live at:
-       https://YOUR-USERNAME.github.io/couples-therapy-log/
+    localStorage is used as a fast local cache so the app
+    feels instant — entries load from the cache first, then
+    sync with Google Sheets in the background.
 
-    TO BACK UP YOUR DATA
+    GOOGLE CONFIGURATION
     --------------------
-    Use the "Export CSV" button in the Summary tab. Do this
-    periodically — if you clear your browser data, localStorage
-    goes with it.
+    CLIENT_ID  : Your OAuth 2.0 Client ID from Google Cloud Console
+    SHEET_ID   : The ID from your Google Sheet's URL
+    These are set in the CONFIG block in the <script> section.
+
+    Neither value is a secret — CLIENT_ID identifies the app
+    to Google but cannot do anything without the user actively
+    approving it via Google's login screen. SHEET_ID is just
+    the identifier in your Sheet's URL.
+
+    HOW AUTHENTICATION WORKS
+    ------------------------
+    On first visit (or after signing out), the app shows a
+    "Sign in with Google" button. Clicking it opens Google's
+    standard OAuth consent screen. You approve it once and
+    the app receives a temporary access token stored in memory.
+    No passwords or tokens are ever stored in this file.
+
+    DEPLOYED AT
+    -----------
+    https://highatomicyield.github.io/couples-therapy-log/
 
     STRUCTURE OF THIS FILE
     ----------------------
     1. <style>     — All visual styling (CSS)
     2. <body>      — The HTML layout and structure
     3. <script>    — All application logic (JavaScript)
-       a. Storage     — Load/save to localStorage
-       b. Rendering   — Functions that draw each tab
-       c. Entry forms — Dynamic form fields per entry type
-       d. Export      — CSV export
+       a. CONFIG      — Google credentials and Sheet settings
+       b. Auth        — Google OAuth sign-in / sign-out
+       c. Sheets API  — Read and write entries to Google Sheets
+       d. Storage     — localStorage cache layer
+       e. Rendering   — Functions that draw each tab
+       f. Entry forms — Dynamic form fields per entry type
+       g. Export      — CSV download
     ============================================================
   -->
 
@@ -543,7 +558,51 @@
 
 <body>
 
-  <!-- ── Site header ──────────────────────────────────────── -->
+  <!-- ── Sign-in screen (shown before authentication) ────── -->
+  <div id="auth-screen" style="
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    padding: 2rem;
+    text-align: center;
+  ">
+    <div style="font-size: 2rem; margin-bottom: 1rem;">⚓</div>
+    <h1 style="font-size: 1.3rem; font-weight: 600; color: var(--navy); margin-bottom: 0.5rem;">
+      Couples Therapy — Vessel Log
+    </h1>
+    <p style="font-size: 0.88rem; color: var(--text-sec); margin-bottom: 2rem; max-width: 320px;">
+      Sign in with Google to load your log and sync entries across devices.
+    </p>
+    <button onclick="signIn()" style="
+      padding: 0.65rem 1.5rem;
+      background: var(--navy);
+      color: white;
+      border: none;
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    ">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      Sign in with Google
+    </button>
+    <p style="font-size: 0.75rem; color: var(--text-hint); margin-top: 1.5rem; max-width: 300px;">
+      Only requests access to Google Sheets. No other Google data is accessed.
+    </p>
+  </div>
+
+  <!-- ── App shell (hidden until signed in) ───────────────── -->
+  <div id="app-shell" style="display: none;">
   <header class="site-header">
     <div class="header-inner">
       <div>
@@ -554,6 +613,17 @@
         <div class="hours-value" id="hdr-hours">—</div>
         <div class="hours-label">engine hours</div>
       </div>
+      <button id="signout-btn" onclick="signOut()" style="
+        display: none;
+        padding: 5px 12px;
+        background: rgba(255,255,255,0.1);
+        color: rgba(255,255,255,0.8);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: var(--radius-sm);
+        font-size: 0.75rem;
+        cursor: pointer;
+        margin-left: 1rem;
+      ">Sign out</button>
     </div>
   </header>
 
@@ -652,45 +722,90 @@
 
   </main>
 
+  </div><!-- end #app-shell -->
+
   <!-- ── Toast notification ───────────────────────────────── -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <!-- ── Chart.js (loaded from CDN) ───────────────────────── -->
-  <!--
-    Chart.js renders the maintenance spend bar chart.
-    If you're offline, the chart simply won't render —
-    everything else in the app works without internet.
-  -->
+  <!-- ── External libraries ───────────────────────────────── -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer
+    onload="if(typeof initGSI==='function') initGSI()"></script>
+  <script src="https://apis.google.com/js/api.js"
+    onload="if(typeof initGAPI==='function') initGAPI()"></script>
 
   <script>
     /*
     ============================================================
     APPLICATION LOGIC
     ============================================================
-    Everything below is plain JavaScript — no frameworks,
-    no build tools, no dependencies beyond Chart.js above.
+    Plain JavaScript — no frameworks, no build tools.
 
     KEY CONCEPTS FOR THE BUDDING DEVELOPER
     ---------------------------------------
     - "const" declares a variable that won't be reassigned
     - "let" declares a variable that might be reassigned
-    - Arrow functions: (x) => x + 1  is the same as  function(x){ return x+1; }
-    - Template literals: `Hello ${name}` — backtick strings that can embed expressions
-    - localStorage: browser key/value store, survives page refresh
-    - JSON.stringify / JSON.parse: converts between JS objects and plain text for storage
+    - Arrow functions: (x) => x + 1  is same as  function(x){ return x+1; }
+    - Template literals: `Hello ${name}` — backtick strings with embedded expressions
+    - async/await: a clean way to handle operations that take time (like network calls)
+      "await" pauses until the operation finishes, without freezing the browser
+    - localStorage: browser key/value store that survives page refresh
+    - JSON.stringify / JSON.parse: converts between JS objects and plain text
+    - Promises: represent a value that will arrive in the future (network response, etc.)
     ============================================================
     */
 
-    // ── Storage key ──────────────────────────────────────────
-    // Change this if you ever need to reset all data cleanly
-    const STORAGE_KEY = 'ct_vessel_log_v1';
+    // ──────────────────────────────────────────────────────────
+    // CONFIG — Google credentials and Sheet settings
+    // ──────────────────────────────────────────────────────────
+    /*
+      These two values wire the app to your Google account.
+
+      CLIENT_ID identifies this app to Google. It is NOT a secret —
+      it cannot do anything without you actively signing in and
+      approving access. Safe to leave in a public file.
+
+      SHEET_ID is the long string in your Google Sheet's URL:
+      https://docs.google.com/spreadsheets/d/SHEET_ID/edit
+
+      SHEET_NAME is the tab name inside the Sheet. "Log" is the
+      default — if you rename the tab in Google Sheets, update it here.
+
+      SCOPES tells Google exactly what access the app is requesting.
+      'spreadsheets' means read and write to Sheets only — nothing
+      else in your Google account is touched.
+    */
+    const CONFIG = {
+      CLIENT_ID:  '630687789875-rfeb8ih07be6rpts3ai9ug1eqeml3ga8.apps.googleusercontent.com',
+      SHEET_ID:   '1u5eyW7MnwNhyB8lzaVEd80JzWO68YAMnZGOktptc5rU',
+      SHEET_NAME: 'Log',
+      SCOPES:     'https://www.googleapis.com/auth/spreadsheets',
+    };
+
+    // Column order in the Google Sheet.
+    // The Sheet header row must match this array exactly.
+    // Add new fields to the END to avoid breaking existing data.
+    const SHEET_COLUMNS = [
+      'id', 'date', 'type', 'location',
+      'gallons', 'pricePerGal', 'totalCost', 'levelBefore',
+      'hours', 'hrsStart', 'hrsEnd',
+      'task', 'system', 'who', 'cost', 'parts', 'nextDue',
+      'from', 'to', 'distance', 'fuelUsed', 'crew', 'sea',
+      'voltage', 'soc', 'bilge', 'fuelLevel', 'freshWater',
+      'notes',
+    ];
+
+    // ── Storage key for localStorage cache ───────────────────
+    const STORAGE_KEY = 'ct_vessel_log_v2';
 
     // ── Application state ────────────────────────────────────
-    let entries    = [];        // All log entries
-    let entryType  = 'fuel';    // Currently selected entry type
+    let entries    = [];        // All log entries (loaded from Sheet or cache)
+    let entryType  = 'fuel';    // Currently selected entry type in the form
     let logFilter  = 'all';     // Currently active log filter
-    let spendChart = null;      // Chart.js instance (kept so we can destroy before re-render)
+    let spendChart = null;      // Chart.js instance
+    let accessToken = null;     // Google OAuth access token (in memory only, never persisted)
+    let gapiReady   = false;    // Whether the Google API client has loaded
+    let gsiReady    = false;    // Whether Google Identity Services has loaded
 
     // ── Human-readable type labels ───────────────────────────
     const TYPE_LABELS = {
@@ -703,28 +818,250 @@
     };
 
     // ──────────────────────────────────────────────────────────
-    // STORAGE — Load and save entries to localStorage
+    // AUTH — Google OAuth sign-in and sign-out
     // ──────────────────────────────────────────────────────────
+    /*
+      Google Identity Services (GIS) handles authentication.
+      The flow:
+        1. User clicks "Sign in with Google"
+        2. Google's popup asks the user to approve access
+        3. On approval, Google calls tokenCallback() with an access token
+        4. We store the token in memory (accessToken variable)
+        5. All Sheets API calls include this token in their headers
+        6. Token expires after ~1 hour — user signs in again if needed
+
+      The token is NEVER written to localStorage, sessionStorage,
+      or anywhere else persistent. It lives only in the accessToken
+      variable and disappears when the page is closed or refreshed.
+    */
+
+    let tokenClient = null; // Google's token client — initialized when GIS loads
 
     /**
-     * Load entries from localStorage.
-     * Starts empty on first visit — add your entries manually.
+     * Called by the Google Identity Services library when it finishes loading.
+     * Sets up the token client that handles the OAuth flow.
      */
-    function loadEntries() {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        // Parse the JSON string back into a JavaScript array
-        entries = JSON.parse(stored);
-      }
-      // No seed data — log starts empty and you fill it in
-      renderAll();
+    function initGSI() {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CONFIG.CLIENT_ID,
+        scope:     CONFIG.SCOPES,
+        callback:  tokenCallback,
+      });
+      gsiReady = true;
+      maybeInitApp();
     }
 
     /**
-     * Save the current entries array to localStorage.
-     * Called after every add/delete operation.
+     * Called when the Google API (gapi) library finishes loading.
+     * Loads the Sheets API client.
      */
-    function persistEntries() {
+    function initGAPI() {
+      gapi.load('client', async () => {
+        await gapi.client.init({});
+        await gapi.client.load('https://sheets.googleapis.com/$discovery/rest?version=v4');
+        gapiReady = true;
+        maybeInitApp();
+      });
+    }
+
+    /**
+     * Only start the app once both libraries have loaded.
+     * (They load in parallel and finish in unpredictable order.)
+     */
+    function maybeInitApp() {
+      if (!gapiReady || !gsiReady) return;
+      // Load cached entries immediately so the UI isn't blank
+      loadFromCache();
+      // Show sign-in screen
+      showAuthScreen();
+    }
+
+    /**
+     * Called when the user approves access in Google's popup.
+     * Receives the access token and kicks off a fresh data load.
+     */
+    async function tokenCallback(tokenResponse) {
+      if (tokenResponse.error) {
+        showToast('Sign-in failed: ' + tokenResponse.error);
+        return;
+      }
+      // Store token in memory — this is the only place it lives
+      accessToken = tokenResponse.access_token;
+      gapi.client.setToken({ access_token: accessToken });
+
+      // Hide auth screen, show the app
+      document.getElementById('auth-screen').style.display = 'none';
+      document.getElementById('app-shell').style.display   = 'block';
+      updateAuthUI(true);
+
+      // Pull fresh data from the Sheet
+      await ensureSheetHeaders();
+      await loadFromSheet();
+    }
+
+    /**
+     * Trigger the Google sign-in popup.
+     */
+    function signIn() {
+      if (!tokenClient) { showToast('Still loading — try again in a moment'); return; }
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+
+    /**
+     * Sign the user out — clears the token from memory and shows the auth screen.
+     */
+    function signOut() {
+      if (accessToken) {
+        google.accounts.oauth2.revoke(accessToken, () => {});
+        accessToken = null;
+        gapi.client.setToken(null);
+      }
+      document.getElementById('auth-screen').style.display = 'flex';
+      document.getElementById('app-shell').style.display   = 'none';
+      updateAuthUI(false);
+    }
+
+    /**
+     * Update the sign-out button visibility in the header.
+     */
+    function updateAuthUI(signedIn) {
+      document.getElementById('signout-btn').style.display = signedIn ? 'block' : 'none';
+    }
+
+    /**
+     * Show the sign-in screen.
+     */
+    function showAuthScreen() {
+      document.getElementById('auth-screen').style.display = 'flex';
+      document.getElementById('app-shell').style.display   = 'none';
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // SHEETS API — Read and write entries
+    // ──────────────────────────────────────────────────────────
+    /*
+      The Google Sheet acts as a simple database.
+      Row 1 is the header row (column names).
+      Each subsequent row is one log entry.
+
+      We use the Sheets API v4 via the gapi client library.
+      All calls are async — they return Promises that we await.
+    */
+
+    /**
+     * Make sure the Sheet has a header row.
+     * If the Sheet is empty, write the column names as row 1.
+     * This is safe to call every time — it checks before writing.
+     */
+    async function ensureSheetHeaders() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         `${CONFIG.SHEET_NAME}!A1:A1`,
+        });
+        const firstCell = response.result.values?.[0]?.[0];
+        if (firstCell === 'id') return; // Headers already exist
+
+        // Sheet is empty — write header row
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId:     CONFIG.SHEET_ID,
+          range:             `${CONFIG.SHEET_NAME}!A1`,
+          valueInputOption:  'RAW',
+          resource: { values: [SHEET_COLUMNS] },
+        });
+      } catch (err) {
+        console.error('Error checking sheet headers:', err);
+      }
+    }
+
+    /**
+     * Load all entries from the Sheet and update the UI.
+     * Converts each row back into a JavaScript object using SHEET_COLUMNS as the key map.
+     */
+    async function loadFromSheet() {
+      try {
+        showToast('Syncing with Google Sheets…');
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         `${CONFIG.SHEET_NAME}!A2:ZZ`,  // All rows after the header
+        });
+
+        const rows = response.result.values || [];
+
+        // Convert each row array into an object using SHEET_COLUMNS as keys
+        // e.g. ['1234', '2026-01-01', 'fuel', ...] becomes { id: '1234', date: '2026-01-01', type: 'fuel', ... }
+        entries = rows.map(row => {
+          const entry = {};
+          SHEET_COLUMNS.forEach((col, i) => {
+            const val = row[i] ?? '';
+            // Convert numeric strings back to numbers where appropriate
+            entry[col] = (val !== '' && !isNaN(val) && col !== 'id' && col !== 'date' &&
+                          col !== 'type' && col !== 'location' && col !== 'task' &&
+                          col !== 'system' && col !== 'who' && col !== 'parts' &&
+                          col !== 'from' && col !== 'to' && col !== 'crew' &&
+                          col !== 'sea' && col !== 'bilge' && col !== 'notes')
+              ? parseFloat(val)
+              : val || undefined;
+          });
+          return entry;
+        }).filter(e => e.id && e.type); // Skip any blank rows
+
+        // Update the local cache
+        persistToCache();
+        renderAll();
+        showToast('Synced');
+      } catch (err) {
+        console.error('Error loading from sheet:', err);
+        showToast('Sync failed — showing cached data');
+      }
+    }
+
+    /**
+     * Append a single entry to the Sheet as a new row.
+     * Called immediately after the user saves a new entry.
+     */
+    async function appendToSheet(entry) {
+      if (!accessToken) return; // Not signed in — cache only
+
+      try {
+        // Convert the entry object into an array in column order
+        const row = SHEET_COLUMNS.map(col => {
+          const val = entry[col];
+          return (val === null || val === undefined) ? '' : val;
+        });
+
+        await gapi.client.sheets.spreadsheets.values.append({
+          spreadsheetId:     CONFIG.SHEET_ID,
+          range:             `${CONFIG.SHEET_NAME}!A1`,
+          valueInputOption:  'RAW',
+          insertDataOption:  'INSERT_ROWS',
+          resource: { values: [row] },
+        });
+      } catch (err) {
+        console.error('Error appending to sheet:', err);
+        showToast('Save to Sheet failed — entry is in local cache');
+      }
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // LOCAL CACHE — localStorage for offline / fast load
+    // ──────────────────────────────────────────────────────────
+    /*
+      localStorage stores a copy of the entries on this device.
+      On page load, we show cached data immediately (fast)
+      then refresh from Google Sheets in the background.
+      This means the app works even with slow or no internet.
+    */
+
+    function loadFromCache() {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        entries = JSON.parse(stored);
+        renderAll();
+      }
+    }
+
+    function persistToCache() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
     }
 
@@ -1045,7 +1382,8 @@
 
       // Add to the front of the array (newest first)
       entries.unshift(entry);
-      persistEntries();
+      persistToCache();
+      appendToSheet(entry); // Fire-and-forget — writes to Sheet in background
       renderAll();
       showToast('Entry saved');
       renderForm(); // Reset form fields
@@ -1395,9 +1733,14 @@
     // ──────────────────────────────────────────────────────────
     // INIT — Run on page load
     // ──────────────────────────────────────────────────────────
+    /*
+      The Google libraries (gsi/client and api.js) each have an
+      onload attribute in their <script> tags that calls initGSI()
+      and initGAPI() respectively when they finish loading.
+      maybeInitApp() waits until both are ready before proceeding.
+    */
 
-    renderForm();  // Draw the default (fuel) form
-    loadEntries(); // Load from localStorage (or seed on first visit)
+    renderForm(); // Draw the default (fuel) entry form immediately
 
   </script>
 </body>
