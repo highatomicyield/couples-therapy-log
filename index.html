@@ -674,6 +674,107 @@
       color: var(--text-sec);
       padding: 1px 0;
     }
+
+    /* ── Clickable log items ─────────────────────────────── */
+    .log-item { cursor: pointer; }
+
+    /* ── Edit mode action buttons ────────────────────────── */
+    .edit-actions {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn-cancel-edit {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      background: var(--white);
+      color: var(--text-sec);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    .btn-cancel-edit:hover { background: var(--sand); }
+
+    .btn-delete-entry {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      background: var(--white);
+      color: var(--red-text);
+      border: 1px solid #e8a0a0;
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    .btn-delete-entry:hover { background: var(--red-bg); }
+
+    /* ── Confirm delete dialog ───────────────────────────── */
+    .confirm-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .confirm-overlay.show { display: flex; }
+
+    .confirm-dialog {
+      background: var(--white);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      max-width: 320px;
+      width: 90%;
+      box-shadow: var(--shadow-md);
+      text-align: center;
+    }
+
+    .confirm-dialog p {
+      font-size: 0.95rem;
+      color: var(--text-pri);
+      margin-bottom: 1.25rem;
+      line-height: 1.5;
+    }
+
+    .confirm-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .confirm-actions button {
+      flex: 1;
+      padding: 0.65rem;
+      border-radius: var(--radius-md);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-confirm-delete {
+      background: #c0392b;
+      color: white;
+      border: none;
+    }
+
+    .btn-confirm-delete:hover { background: #a93226; }
+
+    .btn-confirm-cancel {
+      background: var(--sand);
+      color: var(--text-pri);
+      border: 1px solid var(--border);
+    }
+
+    .btn-confirm-cancel:hover { background: var(--sand-dark); }
   </style>
 </head>
 
@@ -810,6 +911,10 @@
       </div>
 
       <button class="btn-save" onclick="saveEntry()">Save Entry</button>
+      <div id="edit-actions" class="edit-actions" style="display:none">
+        <button class="btn-cancel-edit" onclick="cancelEdit()">Cancel</button>
+        <button class="btn-delete-entry" onclick="confirmDelete()">Delete Entry</button>
+      </div>
       <div id="calc-display"></div>
     </section>
 
@@ -845,6 +950,17 @@
   </main>
 
   </div><!-- end #app-shell -->
+
+  <!-- ── Confirm delete dialog ───────────────────────────── -->
+  <div class="confirm-overlay" id="confirm-overlay" role="dialog" aria-modal="true">
+    <div class="confirm-dialog">
+      <p>Delete this entry? This cannot be undone.</p>
+      <div class="confirm-actions">
+        <button class="btn-confirm-delete" onclick="executeDelete()">Delete</button>
+        <button class="btn-confirm-cancel" onclick="dismissConfirm()">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Toast notification ───────────────────────────────── -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -928,13 +1044,15 @@
     const STORAGE_KEY = 'ct_vessel_log_v2';
 
     // ── Application state ────────────────────────────────────
-    let entries     = [];    // All log entries (loaded from Sheet or cache)
-    let entryType   = 'fuel'; // Currently selected entry type in the form
-    let logFilter   = 'all';  // Currently active log filter
-    let spendChart  = null;   // Chart.js instance
-    let accessToken = null;   // Google OAuth access token (in memory only, never persisted)
-    let vendorList  = [];    // Vendor names loaded from Vendors tab
-    let partsCache  = {};    // Parts rows keyed by entry id string
+    let entries        = [];    // All log entries (loaded from Sheet or cache)
+    let entryType      = 'fuel'; // Currently selected entry type in the form
+    let logFilter      = 'all';  // Currently active log filter
+    let spendChart     = null;   // Chart.js instance
+    let accessToken    = null;   // Google OAuth access token (in memory only, never persisted)
+    let vendorList     = [];    // Vendor names loaded from Vendors tab
+    let partsCache     = {};    // Parts rows keyed by entry id string
+    let editingEntryId = null;  // Id of entry being edited; null when creating new
+    let sheetIds       = {};    // Tab name → numeric sheetId (lazy-loaded for batchUpdate)
 
     const PARTS_COLUMNS = ['entry_id', 'description', 'part_number', 'cost', 'source'];
 
@@ -1310,6 +1428,111 @@
       } catch (err) {
         console.error('Error appending parts:', err);
       }
+    }
+
+    /**
+     * Return the numeric sheetId for a tab name, fetching spreadsheet
+     * metadata once and caching the result.
+     */
+    async function getSheetId(tabName) {
+      if (sheetIds[tabName] !== undefined) return sheetIds[tabName];
+      const response = await gapi.client.sheets.spreadsheets.get({
+        spreadsheetId: CONFIG.SHEET_ID,
+        fields: 'sheets.properties',
+      });
+      (response.result.sheets || []).forEach(s => {
+        sheetIds[s.properties.title] = s.properties.sheetId;
+      });
+      return sheetIds[tabName];
+    }
+
+    /**
+     * Find the 0-based data-row index (excluding header) in a tab where
+     * the first column matches targetId. Returns -1 if not found.
+     */
+    async function findDataRowIndex(tabName, targetId) {
+      const response = await gapi.client.sheets.spreadsheets.values.get({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: `${tabName}!A2:A`,
+      });
+      const rows = response.result.values || [];
+      return rows.findIndex(r => String(r[0]) === String(targetId));
+    }
+
+    /**
+     * Overwrite the Log tab row whose id matches entry.id with updated values.
+     */
+    async function updateEntryInSheet(entry) {
+      const dataIdx = await findDataRowIndex(CONFIG.SHEET_NAME, entry.id);
+      if (dataIdx === -1) throw new Error('Entry not found in sheet');
+      const sheetRow = dataIdx + 2; // +1 for header, +1 for 1-based
+      const row = SHEET_COLUMNS.map(col => {
+        const val = entry[col];
+        return (val === null || val === undefined) ? '' : val;
+      });
+      await gapi.client.sheets.spreadsheets.values.update({
+        spreadsheetId:    CONFIG.SHEET_ID,
+        range:            `${CONFIG.SHEET_NAME}!A${sheetRow}`,
+        valueInputOption: 'RAW',
+        resource: { values: [row] },
+      });
+    }
+
+    /**
+     * Permanently remove a single row from a tab using batchUpdate.
+     * dataIdx is 0-based (not counting the header row).
+     */
+    async function deleteSheetRow(tabName, dataIdx) {
+      const sheetId = await getSheetId(tabName);
+      const rowIndex = dataIdx + 1; // +1 to skip header (0-based sheet index)
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: CONFIG.SHEET_ID,
+        resource: {
+          requests: [{
+            deleteDimension: {
+              range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 },
+            },
+          }],
+        },
+      });
+    }
+
+    /**
+     * Delete all Parts tab rows whose entry_id matches the given id.
+     * Rows are deleted in reverse index order to avoid shifting.
+     */
+    async function deletePartsForEntry(entryId) {
+      const response = await gapi.client.sheets.spreadsheets.values.get({
+        spreadsheetId: CONFIG.SHEET_ID,
+        range: 'Parts!A2:A',
+      });
+      const rows = response.result.values || [];
+      const indices = rows
+        .map((r, i) => ({ match: String(r[0]) === String(entryId), i }))
+        .filter(x => x.match)
+        .map(x => x.i);
+      if (!indices.length) return;
+      const sheetId = await getSheetId('Parts');
+      // Delete in reverse order so earlier indices stay valid
+      const requests = [...indices].reverse().map(i => ({
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex: i + 1, endIndex: i + 2 },
+        },
+      }));
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: CONFIG.SHEET_ID,
+        resource: { requests },
+      });
+    }
+
+    /**
+     * Delete a Log entry row and, for maintenance entries, all associated Parts rows.
+     */
+    async function deleteEntryFromSheet(id, type) {
+      const dataIdx = await findDataRowIndex(CONFIG.SHEET_NAME, id);
+      if (dataIdx === -1) throw new Error('Entry not found in sheet');
+      await deleteSheetRow(CONFIG.SHEET_NAME, dataIdx);
+      if (type === 'maintenance') await deletePartsForEntry(id);
     }
 
     // ──────────────────────────────────────────────────────────
@@ -1741,10 +1964,15 @@
     // SAVE ENTRY — Collect form data and store
     // ──────────────────────────────────────────────────────────
 
-    function saveEntry() {
+    async function saveEntry() {
+      if (editingEntryId && !accessToken) {
+        showToast('Sign in required to edit or delete entries');
+        return;
+      }
+
       // Build the base entry object — fields common to all types
       const entry = {
-        id:       Date.now(), // Unix timestamp as a unique ID
+        id:       editingEntryId || Date.now(), // Preserve id when editing
         type:     entryType,
         date:     fv('f-date') || new Date().toISOString().split('T')[0],
         location: fv('f-location'),
@@ -1813,7 +2041,42 @@
         entry.fwdPump          = fv('f-fwdpump');
       }
 
-      // Add to the front of the array (newest first)
+      if (editingEntryId) {
+        // ── Update existing entry ──────────────────────────
+        try {
+          await updateEntryInSheet(entry);
+
+          if (entryType === 'maintenance') {
+            const parts = collectParts();
+            await deletePartsForEntry(editingEntryId);
+            if (parts.length) {
+              await appendPartsToSheet(editingEntryId, parts);
+              partsCache[String(editingEntryId)] = parts;
+            } else {
+              delete partsCache[String(editingEntryId)];
+            }
+          }
+
+          const idx = entries.findIndex(e => String(e.id) === String(editingEntryId));
+          if (idx !== -1) entries[idx] = entry;
+          persistToCache();
+
+          editingEntryId = null;
+          setEditMode(false);
+          entryType = 'fuel';
+          document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+          document.querySelectorAll('.type-btn')[0]?.classList.add('selected');
+          renderForm();
+          renderAll();
+          showToast('Entry updated');
+        } catch (err) {
+          console.error('Update failed:', err);
+          showToast('Update failed — changes not saved');
+        }
+        return;
+      }
+
+      // ── New entry (existing behavior) ─────────────────────
       entries.unshift(entry);
       persistToCache();
       appendToSheet(entry); // Fire-and-forget
@@ -1936,7 +2199,7 @@
             }).join('')}</div>`
           : '';
 
-        return `<div class="log-item">
+        return `<div class="log-item" onclick="openEntryForEdit('${e.id}')">
           <div class="log-row">
             <span class="badge badge-${e.type}">${label}</span>
             <span class="log-title">${title || label}</span>
@@ -2265,6 +2528,210 @@
       const list = document.getElementById('crew-list');
       if (!list || list.children.length <= 1) return; // Keep at least one row
       btn.closest('.crew-row').remove();
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // EDIT / DELETE — Open entries for editing and deletion
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * Toggle the form between "new entry" and "edit entry" mode.
+     * Adjusts button labels and shows/hides the Cancel + Delete buttons.
+     */
+    function setEditMode(editing) {
+      document.querySelector('.btn-save').textContent = editing ? 'Update Entry' : 'Save Entry';
+      document.getElementById('edit-actions').style.display = editing ? 'flex' : 'none';
+    }
+
+    /**
+     * Open a log entry in the form for editing.
+     * Switches to the New Entry tab, selects the correct type, pre-populates all fields.
+     */
+    function openEntryForEdit(id) {
+      if (!accessToken) {
+        showToast('Sign in required to edit or delete entries');
+        return;
+      }
+      const entry = entries.find(e => String(e.id) === String(id));
+      if (!entry) return;
+
+      showTab('new');
+
+      entryType = entry.type;
+      document.querySelectorAll('.type-btn').forEach(b => {
+        const matches = b.getAttribute('onclick') === `selectType('${entry.type}', this)`;
+        b.classList.toggle('selected', matches);
+      });
+
+      renderForm();
+      editingEntryId = entry.id;
+      setEditMode(true);
+      populateFormFields(entry);
+    }
+
+    /**
+     * Cancel editing and return the form to a blank new-entry state.
+     */
+    function cancelEdit() {
+      editingEntryId = null;
+      setEditMode(false);
+      entryType = 'fuel';
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+      document.querySelectorAll('.type-btn')[0]?.classList.add('selected');
+      renderForm();
+    }
+
+    /**
+     * Pre-populate all form fields from an existing entry object.
+     * Called immediately after renderForm() so the DOM is ready.
+     */
+    function populateFormFields(entry) {
+      const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && val !== undefined && val !== null) el.value = val;
+      };
+
+      set('f-date',     entry.date);
+      set('f-location', entry.location);
+      set('f-notes',    entry.notes);
+
+      if (entry.type === 'fuel') {
+        set('f-gallons',  entry.gallons);
+        set('f-pricegal', entry.pricePerGal);
+        set('f-hours',    entry.hours);
+        ['f-gallons', 'f-pricegal'].forEach(id =>
+          document.getElementById(id)?.dispatchEvent(new Event('blur'))
+        );
+      }
+
+      if (entry.type === 'waste') {
+        set('f-holdingtank', entry.holdingTank);
+        set('f-cost',        entry.cost);
+      }
+
+      if (entry.type === 'maintenance') {
+        set('f-hours',  entry.hours);
+        set('f-system', entry.system);
+        set('f-task',   entry.task);
+        set('f-who',    entry.who);
+        set('f-cost',   entry.cost);
+        const parts = partsCache[String(entry.id)] || [];
+        if (parts.length) {
+          document.getElementById('btn-add-parts').style.display = 'none';
+          document.getElementById('parts-expanded').style.display = '';
+          parts.forEach(part => {
+            addPartRow();
+            const rows = document.querySelectorAll('#parts-list .part-row');
+            const row = rows[rows.length - 1];
+            row.querySelector('.part-desc').value = part.description || '';
+            row.querySelector('.part-num').value  = part.part_number || '';
+            row.querySelector('.part-cost').value = part.cost        || '';
+            const sourceEl = row.querySelector('.part-source');
+            if (part.source) {
+              if (vendorList.includes(part.source)) {
+                sourceEl.value = part.source;
+              } else {
+                sourceEl.value = 'Other';
+                const otherInput = row.querySelector('.part-other-source');
+                otherInput.style.display = '';
+                otherInput.value = part.source !== 'Other' ? part.source : '';
+              }
+            }
+          });
+        }
+      }
+
+      if (entry.type === 'trip') {
+        set('f-from',      entry.from);
+        set('f-to',        entry.to);
+        set('f-hrsstart',  entry.hrsStart);
+        set('f-hrsend',    entry.hrsEnd);
+        set('f-distance',  entry.distance);
+        set('f-fuelstart', entry.fuelStart);
+        set('f-fuelend',   entry.fuelEnd);
+        set('f-sea',       entry.sea);
+        // Populate crew fields
+        const crewNames = [];
+        for (let i = 1; i <= 10; i++) { if (entry[`crew${i}`]) crewNames.push(entry[`crew${i}`]); }
+        if (crewNames.length) {
+          const crewList = document.getElementById('crew-list');
+          const firstInput = crewList?.querySelector('.crew-name');
+          if (firstInput) firstInput.value = crewNames[0];
+          for (let i = 1; i < crewNames.length; i++) {
+            addCrewField();
+            const allRows = crewList.querySelectorAll('.crew-row');
+            const lastInput = allRows[allRows.length - 1].querySelector('.crew-name');
+            if (lastInput) lastInput.value = crewNames[i];
+          }
+        }
+        ['f-fuelstart', 'f-fuelend', 'f-hrsstart', 'f-hrsend'].forEach(id =>
+          document.getElementById(id)?.dispatchEvent(new Event('blur'))
+        );
+      }
+
+      if (entry.type === 'systems') {
+        set('f-holdingtank', entry.holdingTank);
+        set('f-hours',       entry.hours);
+        set('f-fuellevel',   entry.fuelLevel);
+        set('f-elec1status', entry.elec1Status);
+        set('f-elec2status', entry.elec2Status);
+        set('f-elec3status', entry.elec3Status);
+        set('f-voltage',     entry.voltage);
+        set('f-soc',         entry.soc);
+        set('f-freshwater',  entry.freshWater);
+        set('f-oillevel',    entry.oilLevel);
+        set('f-coolant',     entry.coolant);
+        set('f-transfluid',  entry.transFluid);
+        set('f-rawwater',    entry.rawWaterSeacock);
+        set('f-headseacock', entry.headSeacock);
+        set('f-bilge',       entry.bilge);
+        set('f-aftpump',     entry.aftPump);
+        set('f-fwdpump',     entry.fwdPump);
+      }
+    }
+
+    /**
+     * Show the confirmation dialog before deleting an entry.
+     */
+    function confirmDelete() {
+      document.getElementById('confirm-overlay').classList.add('show');
+    }
+
+    /**
+     * Dismiss the confirmation dialog without taking action.
+     */
+    function dismissConfirm() {
+      document.getElementById('confirm-overlay').classList.remove('show');
+    }
+
+    /**
+     * Execute the confirmed deletion — removes the entry from the Sheet and local cache.
+     */
+    async function executeDelete() {
+      dismissConfirm();
+      if (!accessToken) {
+        showToast('Sign in required to edit or delete entries');
+        return;
+      }
+      const id    = editingEntryId;
+      const type  = entries.find(e => String(e.id) === String(id))?.type;
+      try {
+        await deleteEntryFromSheet(id, type);
+        entries = entries.filter(e => String(e.id) !== String(id));
+        delete partsCache[String(id)];
+        persistToCache();
+        editingEntryId = null;
+        setEditMode(false);
+        entryType = 'fuel';
+        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+        document.querySelectorAll('.type-btn')[0]?.classList.add('selected');
+        renderForm();
+        renderAll();
+        showToast('Entry deleted');
+      } catch (err) {
+        console.error('Delete failed:', err);
+        showToast('Delete failed — entry not removed');
+      }
     }
 
     // ──────────────────────────────────────────────────────────
