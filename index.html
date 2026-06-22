@@ -697,7 +697,7 @@
           Fuel
         </button>
         <button class="type-btn" onclick="selectType('waste', this)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.62"/><path d="M12 7v5l3 3"/></svg>
+          <span style="font-size:1.4rem;line-height:1" aria-hidden="true">💩</span>
           Pumpout
         </button>
         <button class="type-btn" onclick="selectType('maintenance', this)">
@@ -710,7 +710,7 @@
         </button>
         <button class="type-btn" onclick="selectType('systems', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-          Systems check
+          Daily Checklist
         </button>
         <button class="type-btn" onclick="selectType('note', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
@@ -1194,7 +1194,7 @@
         html += `
           <div class="form-group">
             <label for="f-gallons">Gallons added</label>
-            <input type="number" id="f-gallons" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-gallons" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-pricegal">Price per gallon ($)</label>
@@ -1202,7 +1202,7 @@
           </div>
           <div class="form-group">
             <label for="f-hours">Engine hours at fill</label>
-            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
@@ -1221,7 +1221,7 @@
           </div>
           <div class="form-group">
             <label for="f-cost">Cost ($)</label>
-            <input type="number" id="f-cost" value="0" step="0.01" min="0" />
+            <input type="number" id="f-cost" value="0.00" step="0.01" min="0" />
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
@@ -1232,7 +1232,7 @@
         html += `
           <div class="form-group">
             <label for="f-hours">Engine hours</label>
-            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-system">System</label>
@@ -1286,23 +1286,23 @@
           </div>
           <div class="form-group">
             <label for="f-hrsstart">Engine hours — start</label>
-            <input type="number" id="f-hrsstart" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-hrsstart" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-hrsend">Engine hours — end</label>
-            <input type="number" id="f-hrsend" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-hrsend" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-distance">Distance (nm)</label>
-            <input type="number" id="f-distance" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-distance" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-fuelstart">Fuel level — start (gal)</label>
-            <input type="number" id="f-fuelstart" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-fuelstart" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-fuelend">Fuel level — end (gal)</label>
-            <input type="number" id="f-fuelend" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-fuelend" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-crew">Crew</label>
@@ -1334,17 +1334,11 @@
           </div>
           <div class="form-group">
             <label for="f-hours">Engine hours</label>
-            <input type="number" id="f-hours" placeholder="0.0" step="0.1" min="0" />
+            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
-            <label for="f-fuellevel">Fuel level</label>
-            <select id="f-fuellevel">
-              <option>Full</option>
-              <option>3/4</option>
-              <option>1/2</option>
-              <option>1/4</option>
-              <option>Low</option>
-            </select>
+            <label for="f-fuellevel">Fuel level (gal)</label>
+            <input type="number" id="f-fuellevel" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-elec1status">Chartplotter</label>
@@ -1371,11 +1365,11 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="f-voltage">House bank voltage (V) — BMV-712 only</label>
+            <label for="f-voltage">House bank voltage (V)</label>
             <input type="number" id="f-voltage" placeholder="12.6" step="0.01" min="0" />
           </div>
           <div class="form-group">
-            <label for="f-soc">House bank SOC (%) — BMV-712</label>
+            <label for="f-soc">House bank SOC (%)</label>
             <input type="number" id="f-soc" placeholder="100" step="1" min="0" max="100" />
           </div>
           <div class="form-group">
@@ -1392,8 +1386,7 @@
             <label for="f-oillevel">Oil level</label>
             <select id="f-oillevel">
               <option>OK</option>
-              <option>Low</option>
-              <option>Add</option>
+              <option>ADDED</option>
               <option>N/C</option>
             </select>
           </div>
@@ -1401,8 +1394,7 @@
             <label for="f-coolant">Coolant level</label>
             <select id="f-coolant">
               <option>OK</option>
-              <option>Low</option>
-              <option>Add</option>
+              <option>ADDED</option>
               <option selected>N/C</option>
             </select>
           </div>
@@ -1410,8 +1402,7 @@
             <label for="f-transfluid">Transmission fluid</label>
             <select id="f-transfluid">
               <option>OK</option>
-              <option>Low</option>
-              <option>Add</option>
+              <option>ADDED</option>
               <option selected>N/C</option>
             </select>
           </div>
