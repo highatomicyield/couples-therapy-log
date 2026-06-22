@@ -437,6 +437,37 @@
 
     .btn-save:hover { background: var(--teal-lt); }
 
+    #calc-display:not(:empty) {
+      margin-top: 0.75rem;
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .calc-field {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 14px;
+      min-width: 110px;
+    }
+    .calc-field .calc-label {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--text-hint);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .calc-field .calc-value {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-pri);
+    }
+
     /* ── Maintenance schedule ─────────────────────────────── */
     .maint-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -634,7 +665,7 @@
   <nav class="tab-nav" aria-label="Log sections">
     <div class="tab-nav-inner">
       <button class="tab-btn active" onclick="showTab('log')"     aria-controls="tab-log">Log</button>
-      <button class="tab-btn"        onclick="showTab('new')"     aria-controls="tab-new">New entry</button>
+      <button class="tab-btn"        onclick="showTab('new')"     aria-controls="tab-new">New Entry</button>
       <button class="tab-btn"        onclick="showTab('maint')"   aria-controls="tab-maint">Maintenance</button>
       <button class="tab-btn"        onclick="showTab('summary')" aria-controls="tab-summary">Summary</button>
     </div>
@@ -667,7 +698,7 @@
         </button>
         <button class="type-btn" onclick="selectType('waste', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.62"/><path d="M12 7v5l3 3"/></svg>
-          Waste pumpout
+          Pumpout
         </button>
         <button class="type-btn" onclick="selectType('maintenance', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
@@ -675,7 +706,7 @@
         </button>
         <button class="type-btn" onclick="selectType('trip', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-          Trip log
+          Trip Log
         </button>
         <button class="type-btn" onclick="selectType('systems', this)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
@@ -691,7 +722,8 @@
         <!-- Dynamically populated by renderForm() -->
       </div>
 
-      <button class="btn-save" onclick="saveEntry()">Save entry</button>
+      <button class="btn-save" onclick="saveEntry()">Save Entry</button>
+      <div id="calc-display"></div>
     </section>
 
     <!-- MAINTENANCE TAB -->
@@ -793,13 +825,14 @@
       'gallons', 'pricePerGal', 'totalCost',
       'hours', 'hrsStart', 'hrsEnd',
       'task', 'system', 'who', 'cost', 'parts',
-      'from', 'to', 'distance', 'fuelUsed', 'crew', 'sea',
+      'from', 'to', 'distance', 'crew', 'sea',
       'voltage', 'soc', 'bilge', 'fuelLevel', 'freshWater',
       'notes',
       'holdingTank',
-      'elec1Label', 'elec1Status', 'elec2Label', 'elec2Status', 'elec3Label', 'elec3Status',
+      'elec1Status', 'elec2Status', 'elec3Status',
       'oilLevel', 'coolant', 'transFluid', 'rawWaterSeacock', 'headSeacock',
       'aftPump', 'fwdPump',
+      'fuelStart', 'fuelEnd',
     ];
 
     // ── Storage key for localStorage cache ───────────────────
@@ -1264,8 +1297,12 @@
             <input type="number" id="f-distance" placeholder="0.0" step="0.1" min="0" />
           </div>
           <div class="form-group">
-            <label for="f-fuelused">Fuel used (gal)</label>
-            <input type="number" id="f-fuelused" placeholder="0.0" step="0.1" min="0" />
+            <label for="f-fuelstart">Fuel level — start (gal)</label>
+            <input type="number" id="f-fuelstart" placeholder="0.0" step="0.1" min="0" />
+          </div>
+          <div class="form-group">
+            <label for="f-fuelend">Fuel level — end (gal)</label>
+            <input type="number" id="f-fuelend" placeholder="0.0" step="0.1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-crew">Crew</label>
@@ -1310,11 +1347,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="f-elec1label">Electronics 1 — name</label>
-            <input type="text" id="f-elec1label" value="GPSmap 8612" />
-          </div>
-          <div class="form-group">
-            <label for="f-elec1status">Electronics 1 — status</label>
+            <label for="f-elec1status">Chartplotter</label>
             <select id="f-elec1status">
               <option>SAT</option>
               <option>FAILED</option>
@@ -1322,11 +1355,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="f-elec2label">Electronics 2 — name</label>
-            <input type="text" id="f-elec2label" value="VHF 215" />
-          </div>
-          <div class="form-group">
-            <label for="f-elec2status">Electronics 2 — status</label>
+            <label for="f-elec2status">VHF</label>
             <select id="f-elec2status">
               <option>SAT</option>
               <option>FAILED</option>
@@ -1334,11 +1363,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="f-elec3label">Electronics 3 — name</label>
-            <input type="text" id="f-elec3label" value="Autopilot" />
-          </div>
-          <div class="form-group">
-            <label for="f-elec3status">Electronics 3 — status</label>
+            <label for="f-elec3status">Autopilot</label>
             <select id="f-elec3status">
               <option>SAT</option>
               <option>FAILED</option>
@@ -1444,6 +1469,52 @@
 
       html += '</div>'; // close .form-grid
       wrap.innerHTML = html;
+      attachCalcListeners();
+    }
+
+    function attachCalcListeners() {
+      const display = document.getElementById('calc-display');
+      if (!display) return;
+      display.innerHTML = '';
+
+      function calcField(label, value) {
+        return `<div class="calc-field"><span class="calc-label">${label}</span><span class="calc-value">${value}</span></div>`;
+      }
+
+      if (entryType === 'fuel') {
+        const update = () => {
+          const gal   = parseFloat(document.getElementById('f-gallons')?.value)  || 0;
+          const price = parseFloat(document.getElementById('f-pricegal')?.value) || 0;
+          if (gal && price) {
+            display.innerHTML = calcField('Total cost', '$' + (gal * price).toFixed(2));
+          } else {
+            display.innerHTML = '';
+          }
+        };
+        ['f-gallons', 'f-pricegal'].forEach(id => {
+          document.getElementById(id)?.addEventListener('blur', update);
+        });
+      }
+
+      if (entryType === 'trip') {
+        const update = () => {
+          const fs  = parseFloat(document.getElementById('f-fuelstart')?.value);
+          const fe  = parseFloat(document.getElementById('f-fuelend')?.value);
+          const hs  = parseFloat(document.getElementById('f-hrsstart')?.value);
+          const he  = parseFloat(document.getElementById('f-hrsend')?.value);
+          const consumed = (!isNaN(fs) && !isNaN(fe)) ? fs - fe : null;
+          const hrs      = (!isNaN(hs) && !isNaN(he)) ? he - hs : null;
+          const burn     = (consumed !== null && hrs > 0) ? consumed / hrs : null;
+          const fmt = (v, dec, unit) => v !== null ? v.toFixed(dec) + unit : '—';
+          display.innerHTML =
+            calcField('Fuel consumed', fmt(consumed, 1, ' gal')) +
+            calcField('Hours underway', fmt(hrs, 1, ' hrs')) +
+            calcField('Burn rate', burn !== null ? burn.toFixed(2) + ' gal/hr' : '—');
+        };
+        ['f-fuelstart', 'f-fuelend', 'f-hrsstart', 'f-hrsend'].forEach(id => {
+          document.getElementById(id)?.addEventListener('blur', update);
+        });
+      }
     }
 
     // ──────────────────────────────────────────────────────────
@@ -1503,25 +1574,23 @@
       }
 
       if (entryType === 'trip') {
-        entry.from     = fv('f-from');
-        entry.to       = fv('f-to');
-        entry.hrsStart = fn('f-hrsstart');
-        entry.hrsEnd   = fn('f-hrsend');
-        entry.distance = fn('f-distance');
-        entry.fuelUsed = fn('f-fuelused');
-        entry.crew     = fv('f-crew');
-        entry.sea      = fv('f-sea');
+        entry.from      = fv('f-from');
+        entry.to        = fv('f-to');
+        entry.hrsStart  = fn('f-hrsstart');
+        entry.hrsEnd    = fn('f-hrsend');
+        entry.distance  = fn('f-distance');
+        entry.fuelStart = fn('f-fuelstart');
+        entry.fuelEnd   = fn('f-fuelend');
+        entry.crew      = fv('f-crew');
+        entry.sea       = fv('f-sea');
       }
 
       if (entryType === 'systems') {
         entry.holdingTank      = fv('f-holdingtank');
         entry.hours            = fn('f-hours');
         entry.fuelLevel        = fv('f-fuellevel');
-        entry.elec1Label       = fv('f-elec1label');
         entry.elec1Status      = fv('f-elec1status');
-        entry.elec2Label       = fv('f-elec2label');
         entry.elec2Status      = fv('f-elec2status');
-        entry.elec3Label       = fv('f-elec3label');
         entry.elec3Status      = fv('f-elec3status');
         entry.voltage          = fn('f-voltage');
         entry.soc              = fn('f-soc');
@@ -1836,12 +1905,17 @@
       // All possible fields across all entry types
       const fields = [
         'date', 'type', 'location',
-        'gallons', 'pricePerGal', 'totalCost', 'levelBefore',
+        'gallons', 'pricePerGal', 'totalCost',
         'hours', 'hrsStart', 'hrsEnd',
-        'task', 'system', 'who', 'cost', 'parts', 'nextDue',
-        'from', 'to', 'distance', 'fuelUsed', 'crew', 'sea',
+        'task', 'system', 'who', 'cost', 'parts',
+        'from', 'to', 'distance', 'crew', 'sea',
         'voltage', 'soc', 'bilge', 'fuelLevel', 'freshWater',
         'notes',
+        'holdingTank',
+        'elec1Status', 'elec2Status', 'elec3Status',
+        'oilLevel', 'coolant', 'transFluid', 'rawWaterSeacock', 'headSeacock',
+        'aftPump', 'fwdPump',
+        'fuelStart', 'fuelEnd',
       ];
 
       // Build CSV rows
