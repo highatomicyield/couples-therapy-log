@@ -587,6 +587,93 @@
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; }
     }
+
+    /* ── Parts section (Maintenance form) ────────────────── */
+    .parts-section {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-lt);
+    }
+
+    .btn-add-parts {
+      padding: 6px 14px;
+      border: 1px dashed var(--teal);
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--white);
+      color: var(--teal);
+      transition: all 0.12s;
+    }
+
+    .btn-add-parts:hover { background: var(--teal-bg); }
+
+    .part-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      margin-bottom: 6px;
+    }
+
+    .part-row .part-desc         { flex: 3; min-width: 150px; }
+    .part-row .part-num          { flex: 1.5; min-width: 90px; }
+    .part-row .part-cost         { flex: 1; min-width: 75px; }
+    .part-row .part-source-wrap  { flex: 2; min-width: 110px; display: flex; flex-direction: column; gap: 4px; }
+    .part-row .btn-remove-row    { flex: 0 0 auto; }
+
+    .btn-remove-row {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 1rem;
+      cursor: pointer;
+      background: var(--white);
+      color: var(--text-hint);
+      line-height: 1;
+      transition: all 0.12s;
+    }
+
+    .btn-remove-row:hover { background: var(--red-bg); color: var(--red-text); border-color: #e8a0a0; }
+
+    .btn-add-row {
+      margin-top: 4px;
+      padding: 5px 12px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--white);
+      color: var(--text-sec);
+      transition: all 0.12s;
+    }
+
+    .btn-add-row:hover { background: var(--sand); }
+
+    /* ── Crew section (Trip form) ─────────────────────────── */
+    .crew-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+      align-items: center;
+    }
+
+    .crew-row input { flex: 1; }
+
+    /* ── Log parts list ───────────────────────────────────── */
+    .log-parts {
+      margin-top: 5px;
+      padding-top: 5px;
+      border-top: 1px solid var(--border-lt);
+    }
+
+    .log-part-item {
+      font-size: 0.78rem;
+      color: var(--text-sec);
+      padding: 1px 0;
+    }
   </style>
 </head>
 
@@ -833,6 +920,8 @@
       'oilLevel', 'coolant', 'transFluid', 'rawWaterSeacock', 'headSeacock',
       'aftPump', 'fwdPump',
       'fuelStart', 'fuelEnd',
+      'crew1', 'crew2', 'crew3', 'crew4', 'crew5',
+      'crew6', 'crew7', 'crew8', 'crew9', 'crew10',
     ];
 
     // ── Storage key for localStorage cache ───────────────────
@@ -844,6 +933,23 @@
     let logFilter   = 'all';  // Currently active log filter
     let spendChart  = null;   // Chart.js instance
     let accessToken = null;   // Google OAuth access token (in memory only, never persisted)
+    let vendorList  = [];    // Vendor names loaded from Vendors tab
+    let partsCache  = {};    // Parts rows keyed by entry id string
+
+    const PARTS_COLUMNS = ['entry_id', 'description', 'part_number', 'cost', 'source'];
+
+    const INITIAL_VENDORS = [
+      'Boat Outfitters',
+      'Fisheries Supply',
+      'Gig Harbor Marina & Boatyard',
+      'Great Lakes Skipper',
+      'Home Depot',
+      'Longship Marine',
+      'Pacific Power Group',
+      'Panther RV Products',
+      'ReVolt Marine Systems',
+      'West Marine',
+    ];
 
     // ── Human-readable type labels ───────────────────────────
     const TYPE_LABELS = {
@@ -961,8 +1067,11 @@
       document.getElementById('app-shell').style.display   = 'block';
       document.getElementById('signout-btn').style.display = 'block';
 
-      // Load data from Sheet
+      // Initialize sheets and load data
       await ensureSheetHeaders();
+      await ensurePartsHeaders();
+      await ensureVendorsData();
+      await loadVendors();
       await loadFromSheet();
     }
 
@@ -1067,7 +1176,8 @@
                           col !== 'type' && col !== 'location' && col !== 'task' &&
                           col !== 'system' && col !== 'who' && col !== 'parts' &&
                           col !== 'from' && col !== 'to' && col !== 'crew' &&
-                          col !== 'sea' && col !== 'bilge' && col !== 'notes')
+                          col !== 'sea' && col !== 'bilge' && col !== 'notes' &&
+                          !col.startsWith('crew'))
               ? parseFloat(val)
               : val || undefined;
           });
@@ -1077,6 +1187,7 @@
         // Update the local cache
         persistToCache();
         renderAll();
+        loadAllParts(); // Background fetch — re-renders log with parts when done
         showToast('Synced');
       } catch (err) {
         console.error('Error loading from sheet:', err);
@@ -1108,6 +1219,96 @@
       } catch (err) {
         console.error('Error appending to sheet:', err);
         showToast('Save to Sheet failed — entry is in local cache');
+      }
+    }
+
+    async function ensurePartsHeaders() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Parts!A1:A1',
+        });
+        if (response.result.values?.[0]?.[0] === 'entry_id') return;
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId:    CONFIG.SHEET_ID,
+          range:            'Parts!A1',
+          valueInputOption: 'RAW',
+          resource: { values: [PARTS_COLUMNS] },
+        });
+      } catch (err) {
+        console.error('Error ensuring Parts headers:', err);
+      }
+    }
+
+    async function ensureVendorsData() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Vendors!A1:A1',
+        });
+        if (response.result.values?.[0]?.[0] === 'name') return;
+        const rows = [['name'], ...INITIAL_VENDORS.map(v => [v])];
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId:    CONFIG.SHEET_ID,
+          range:            'Vendors!A1',
+          valueInputOption: 'RAW',
+          resource: { values: rows },
+        });
+      } catch (err) {
+        console.error('Error ensuring Vendors data:', err);
+      }
+    }
+
+    async function loadVendors() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Vendors!A2:A',
+        });
+        const rows = response.result.values || [];
+        vendorList = rows.map(r => r[0]).filter(Boolean);
+      } catch (err) {
+        console.error('Error loading vendors:', err);
+        vendorList = [...INITIAL_VENDORS];
+      }
+    }
+
+    async function loadAllParts() {
+      if (!accessToken) return;
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Parts!A2:E',
+        });
+        const rows = response.result.values || [];
+        partsCache = {};
+        rows.forEach(row => {
+          const entryId = row[0] || '';
+          const desc    = row[1] || '';
+          if (!entryId || !desc) return;
+          const part = { description: desc, part_number: row[2] || '', cost: row[3] || '', source: row[4] || '' };
+          if (!partsCache[entryId]) partsCache[entryId] = [];
+          partsCache[entryId].push(part);
+        });
+        renderLog();
+      } catch (err) {
+        console.error('Error loading parts:', err);
+      }
+    }
+
+    async function appendPartsToSheet(entryId, parts) {
+      if (!accessToken || !parts.length) return;
+      const rows = parts.map(p => [String(entryId), p.description, p.part_number, p.cost, p.source]);
+      try {
+        await gapi.client.sheets.spreadsheets.values.append({
+          spreadsheetId:    CONFIG.SHEET_ID,
+          range:            'Parts!A1',
+          valueInputOption: 'RAW',
+          insertDataOption: 'INSERT_ROWS',
+          resource: { values: rows },
+        });
+      } catch (err) {
+        console.error('Error appending parts:', err);
       }
     }
 
@@ -1244,6 +1445,7 @@
               <option>Steering</option>
               <option>Electronics</option>
               <option>Fuel system</option>
+              <option>Various</option>
               <option>Other</option>
             </select>
           </div>
@@ -1266,13 +1468,17 @@
             <input type="number" id="f-cost" placeholder="0.00" step="0.01" min="0" />
           </div>
           <div class="form-group full">
-            <label for="f-parts">Parts / fluids used</label>
-            <input type="text" id="f-parts" placeholder="e.g. Volvo Penta OEM oil filter, 9 qts 15W-40" />
-          </div>
-          <div class="form-group full">
             <label for="f-notes">Notes</label>
             <textarea id="f-notes" placeholder="Findings, observations, anything to watch..."></textarea>
-          </div>`;
+          </div>
+        </div>
+        <div class="parts-section" id="parts-section">
+          <button type="button" class="btn-add-parts" id="btn-add-parts" onclick="expandPartsSection()">+ Add parts</button>
+          <div id="parts-expanded" style="display:none">
+            <div id="parts-list"></div>
+            <button type="button" class="btn-add-row" onclick="addPartRow()">+ Add another part</button>
+          </div>
+        </div>`;
 
       } else if (entryType === 'trip') {
         html += `
@@ -1304,9 +1510,15 @@
             <label for="f-fuelend">Fuel level — end (gal)</label>
             <input type="number" id="f-fuelend" placeholder="0" step="1" min="0" />
           </div>
-          <div class="form-group">
-            <label for="f-crew">Crew</label>
-            <input type="text" id="f-crew" placeholder="Names aboard" />
+          <div class="form-group full" id="crew-section">
+            <label>Crew / pets</label>
+            <div id="crew-list">
+              <div class="crew-row">
+                <input type="text" class="crew-name" placeholder="Crew member / pet" />
+                <button type="button" class="btn-remove-row" onclick="removeCrewField(this)" title="Remove">×</button>
+              </div>
+            </div>
+            <button type="button" class="btn-add-row" onclick="addCrewField()">+ Add crew</button>
           </div>
           <div class="form-group">
             <label for="f-sea">Sea state</label>
@@ -1458,7 +1670,8 @@
           </div>`;
       }
 
-      html += '</div>'; // close .form-grid
+      // maintenance closes its own form-grid before the parts section
+      if (entryType !== 'maintenance') html += '</div>';
       wrap.innerHTML = html;
       attachCalcListeners();
     }
@@ -1561,7 +1774,6 @@
         entry.task    = fv('f-task');
         entry.who     = fv('f-who');
         entry.cost    = fn('f-cost');
-        entry.parts   = fv('f-parts');
       }
 
       if (entryType === 'trip') {
@@ -1572,8 +1784,13 @@
         entry.distance  = fn('f-distance');
         entry.fuelStart = fn('f-fuelstart');
         entry.fuelEnd   = fn('f-fuelend');
-        entry.crew      = fv('f-crew');
         entry.sea       = fv('f-sea');
+        // Map crew name fields to crew1–crew10
+        const crewNames = [...document.querySelectorAll('#crew-list .crew-name')]
+          .map(el => el.value.trim()).filter(Boolean);
+        for (let i = 1; i <= 10; i++) {
+          entry[`crew${i}`] = crewNames[i - 1] || '';
+        }
       }
 
       if (entryType === 'systems') {
@@ -1599,7 +1816,16 @@
       // Add to the front of the array (newest first)
       entries.unshift(entry);
       persistToCache();
-      appendToSheet(entry); // Fire-and-forget — writes to Sheet in background
+      appendToSheet(entry); // Fire-and-forget
+
+      if (entryType === 'maintenance') {
+        const parts = collectParts();
+        if (parts.length) {
+          partsCache[String(entry.id)] = parts;
+          appendPartsToSheet(entry.id, parts); // Fire-and-forget
+        }
+      }
+
       renderAll();
       showToast('Entry saved');
       renderForm(); // Reset form fields
@@ -1663,12 +1889,18 @@
           ].filter(Boolean).join(' · ');
         }
 
+        const cachedParts = (e.type === 'maintenance') ? (partsCache[String(e.id)] || []) : [];
+
         if (e.type === 'trip') {
-          title  = (e.from && e.to) ? `${e.from} → ${e.to}` : 'Trip';
+          title = (e.from && e.to) ? `${e.from} → ${e.to}` : 'Trip';
+          // Prefer crew1–crew10 columns; fall back to legacy crew string
+          const crewNames = [];
+          for (let i = 1; i <= 10; i++) { if (e[`crew${i}`]) crewNames.push(e[`crew${i}`]); }
+          const crewDisplay = crewNames.length ? crewNames.join(', ') : (e.crew || '');
           detail = [
             e.distance ? `${e.distance} nm` : '',
             e.sea,
-            e.crew,
+            crewDisplay,
           ].filter(Boolean).join(' · ');
         }
 
@@ -1693,13 +1925,25 @@
           ? e.notes.substring(0, 110) + (e.notes.length > 110 ? '…' : '')
           : '';
 
+        const partsHtml = cachedParts.length
+          ? `<div class="log-parts">${cachedParts.map(p => {
+              const line = [
+                p.description,
+                p.source || '',
+                p.cost !== '' && p.cost != null ? `$${parseFloat(p.cost).toFixed(2)}` : '',
+              ].filter(Boolean).join(' — ');
+              return `<div class="log-part-item">${line}</div>`;
+            }).join('')}</div>`
+          : '';
+
         return `<div class="log-item">
           <div class="log-row">
             <span class="badge badge-${e.type}">${label}</span>
             <span class="log-title">${title || label}</span>
             <span class="log-meta">${e.date}${e.location ? ' · ' + e.location : ''}</span>
           </div>
-          ${detail    ? `<div class="log-detail">${detail}</div>` : ''}
+          ${detail      ? `<div class="log-detail">${detail}</div>` : ''}
+          ${partsHtml}
           ${notePreview ? `<div class="log-notes">${notePreview}</div>` : ''}
         </div>`;
       }).join('');
@@ -1942,6 +2186,85 @@
       toast.textContent = message;
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // PARTS / CREW FORM HELPERS
+    // ──────────────────────────────────────────────────────────
+
+    function expandPartsSection() {
+      document.getElementById('btn-add-parts').style.display = 'none';
+      document.getElementById('parts-expanded').style.display = '';
+      addPartRow(); // Start with one empty row
+    }
+
+    function addPartRow() {
+      const list = document.getElementById('parts-list');
+      if (!list) return;
+      const vendorOptions = vendorList.map(v =>
+        `<option value="${v}">${v}</option>`
+      ).join('');
+      const row = document.createElement('div');
+      row.className = 'part-row';
+      row.innerHTML = `
+        <input type="text"   class="part-desc"  placeholder="Description *" />
+        <input type="text"   class="part-num"   placeholder="Part number" />
+        <input type="number" class="part-cost"  placeholder="Cost $" step="0.01" min="0" />
+        <div class="part-source-wrap">
+          <select class="part-source" onchange="handleSourceChange(this)">
+            <option value="">— Source —</option>
+            ${vendorOptions}
+            <option value="Other">Other</option>
+          </select>
+          <input type="text" class="part-other-source" placeholder="Specify vendor" style="display:none" />
+        </div>
+        <button type="button" class="btn-remove-row" onclick="removePartRow(this)" title="Remove">×</button>`;
+      list.appendChild(row);
+    }
+
+    function removePartRow(btn) {
+      btn.closest('.part-row').remove();
+    }
+
+    function handleSourceChange(select) {
+      const otherInput = select.closest('.part-source-wrap').querySelector('.part-other-source');
+      otherInput.style.display = select.value === 'Other' ? '' : 'none';
+    }
+
+    function collectParts() {
+      const parts = [];
+      document.querySelectorAll('.part-row').forEach(row => {
+        const desc = row.querySelector('.part-desc')?.value.trim();
+        if (!desc) return;
+        const sourceEl  = row.querySelector('.part-source');
+        const sourceVal = sourceEl?.value || '';
+        const otherVal  = row.querySelector('.part-other-source')?.value.trim() || '';
+        parts.push({
+          description: desc,
+          part_number: row.querySelector('.part-num')?.value.trim()   || '',
+          cost:        row.querySelector('.part-cost')?.value          || '',
+          source:      sourceVal === 'Other' ? (otherVal || 'Other') : sourceVal,
+        });
+      });
+      return parts;
+    }
+
+    function addCrewField() {
+      const list = document.getElementById('crew-list');
+      if (!list) return;
+      if (list.children.length >= 10) return; // Max 10
+      const row = document.createElement('div');
+      row.className = 'crew-row';
+      row.innerHTML = `
+        <input type="text" class="crew-name" placeholder="Crew member / pet" />
+        <button type="button" class="btn-remove-row" onclick="removeCrewField(this)" title="Remove">×</button>`;
+      list.appendChild(row);
+    }
+
+    function removeCrewField(btn) {
+      const list = document.getElementById('crew-list');
+      if (!list || list.children.length <= 1) return; // Keep at least one row
+      btn.closest('.crew-row').remove();
     }
 
     // ──────────────────────────────────────────────────────────
