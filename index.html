@@ -1244,20 +1244,19 @@
     */
 
     /**
-     * Make sure the Sheet has a header row.
-     * If the Sheet is empty, write the column names as row 1.
-     * This is safe to call every time — it checks before writing.
+     * Make sure the Sheet header row matches SHEET_COLUMNS exactly.
+     * Writes or overwrites row 1 whenever the stored headers are missing
+     * or differ from the current column list (e.g. after columns are added).
      */
     async function ensureSheetHeaders() {
       try {
         const response = await gapi.client.sheets.spreadsheets.values.get({
           spreadsheetId: CONFIG.SHEET_ID,
-          range:         `${CONFIG.SHEET_NAME}!A1:A1`,
+          range:         `${CONFIG.SHEET_NAME}!A1:ZZ1`,
         });
-        const firstCell = response.result.values?.[0]?.[0];
-        if (firstCell === 'id') return; // Headers already exist
+        const current = response.result.values?.[0] || [];
+        if (JSON.stringify(current) === JSON.stringify(SHEET_COLUMNS)) return;
 
-        // Sheet is empty — write header row
         await gapi.client.sheets.spreadsheets.values.update({
           spreadsheetId:     CONFIG.SHEET_ID,
           range:             `${CONFIG.SHEET_NAME}!A1`,
