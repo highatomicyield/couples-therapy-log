@@ -786,6 +786,13 @@
     }
 
     .btn-confirm-cancel:hover { background: var(--sand-dark); }
+
+    /* ── Date input width fix ───────────────────────────────── */
+    /* Overrides browser intrinsic sizing so date fields respect the grid column */
+    input[type="date"] {
+      width: 100%;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 
@@ -846,17 +853,34 @@
         <div class="hours-value" id="hdr-hours">—</div>
         <div class="hours-label">engine hours</div>
       </div>
-      <button id="signout-btn" onclick="signOut()" style="
-        display: none;
-        padding: 5px 12px;
-        background: rgba(255,255,255,0.1);
-        color: rgba(255,255,255,0.8);
-        border: 1px solid rgba(255,255,255,0.2);
-        border-radius: var(--radius-sm);
-        font-size: 0.75rem;
-        cursor: pointer;
-        margin-left: 1rem;
-      ">Sign out</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button id="sync-btn" onclick="handleSyncClick()" title="Sync with Google Sheets" style="
+          display: none;
+          padding: 5px 9px;
+          background: rgba(255,255,255,0.1);
+          color: rgba(255,255,255,0.8);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          line-height: 1;
+        ">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+        <button id="signout-btn" onclick="signOut()" style="
+          display: none;
+          padding: 5px 12px;
+          background: rgba(255,255,255,0.1);
+          color: rgba(255,255,255,0.8);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: var(--radius-sm);
+          font-size: 0.75rem;
+          cursor: pointer;
+        ">Sign out</button>
+      </div>
     </div>
   </header>
 
@@ -1065,6 +1089,7 @@
     let editingEntryId = null;  // Id of entry being edited; null when creating new
     let sheetIds       = {};    // Tab name → numeric sheetId (lazy-loaded for batchUpdate)
     let prefs          = {};    // Key/value preferences loaded from Preferences tab
+    let contactList    = [];    // Contact names loaded from Contacts tab
 
     const PARTS_COLUMNS = ['entry_id', 'description', 'part_number', 'cost', 'source'];
 
@@ -1072,6 +1097,13 @@
     const INITIAL_PREFS = [
       ['default_location', 'Port of Brownsville'],
       ['default_crew1',    ''],
+    ];
+
+    const CONTACTS_COLUMNS = ['name'];
+    const INITIAL_CONTACTS = [
+      'Gig Harbor Marina & Boatyard',
+      'Owner',
+      'ReVolt Marine Systems',
     ];
 
     const INITIAL_VENDORS = [
@@ -1202,15 +1234,15 @@
       document.getElementById('auth-screen').style.display = 'none';
       document.getElementById('app-shell').style.display   = 'block';
       document.getElementById('signout-btn').style.display = 'block';
+      document.getElementById('sync-btn').style.display    = 'block';
 
       // Initialize sheets and load data
       await ensureSheetHeaders();
       await ensurePartsHeaders();
       await ensureVendorsData();
       await ensurePreferencesData();
-      await loadVendors();
-      await loadPreferences();
-      await loadFromSheet();
+      await ensureContactsData();
+      await syncFromSheets();
     }
 
     /**
@@ -1241,6 +1273,7 @@
       renderAll();
       showAuthScreen();
       document.getElementById('signout-btn').style.display = 'none';
+      document.getElementById('sync-btn').style.display    = 'none';
     }
 
     /**
@@ -1289,26 +1322,44 @@
     }
 
     /**
-     * Load all entries from the Sheet and update the UI.
-     * Converts each row back into a JavaScript object using SHEET_COLUMNS as the key map.
+     * Full re-read from all Sheet tabs. Called after sign-in and by the sync button.
+     * Reads all tabs in parallel, then atomically updates all in-memory state.
+     * On any failure, shows a toast and leaves existing state untouched.
      */
-    async function loadFromSheet() {
+    async function syncFromSheets() {
+      if (!accessToken) return;
       try {
         showToast('Syncing with Google Sheets…');
-        const response = await gapi.client.sheets.spreadsheets.values.get({
-          spreadsheetId: CONFIG.SHEET_ID,
-          range:         `${CONFIG.SHEET_NAME}!A2:ZZ`,  // All rows after the header
-        });
 
-        const rows = response.result.values || [];
+        const [logResp, vendorsResp, contactsResp, prefsResp, partsResp] = await Promise.all([
+          gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SHEET_ID,
+            range:         `${CONFIG.SHEET_NAME}!A2:ZZ`,
+          }),
+          gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SHEET_ID,
+            range:         'Vendors!A2:A',
+          }),
+          gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SHEET_ID,
+            range:         'Contacts!A2:A',
+          }),
+          gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SHEET_ID,
+            range:         'Preferences!A2:B',
+          }),
+          gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SHEET_ID,
+            range:         'Parts!A2:E',
+          }),
+        ]);
 
-        // Convert each row array into an object using SHEET_COLUMNS as keys
-        // e.g. ['1234', '2026-01-01', 'fuel', ...] becomes { id: '1234', date: '2026-01-01', type: 'fuel', ... }
-        entries = rows.map(row => {
+        // Process log entries
+        const logRows = logResp.result.values || [];
+        const newEntries = logRows.map(row => {
           const entry = {};
           SHEET_COLUMNS.forEach((col, i) => {
             const val = row[i] ?? '';
-            // Convert numeric strings back to numbers where appropriate
             entry[col] = (val !== '' && !isNaN(val) && col !== 'id' && col !== 'date' &&
                           col !== 'type' && col !== 'location' && col !== 'task' &&
                           col !== 'system' && col !== 'who' && col !== 'parts' &&
@@ -1319,17 +1370,47 @@
               : val || undefined;
           });
           return entry;
-        }).filter(e => e.id && e.type); // Skip any blank rows
+        }).filter(e => e.id && e.type);
 
-        // Update the local cache
+        // Process vendors
+        const newVendors = (vendorsResp.result.values || []).map(r => r[0]).filter(Boolean);
+
+        // Process contacts
+        const newContacts = (contactsResp.result.values || []).map(r => r[0]).filter(Boolean);
+
+        // Process preferences
+        const newPrefs = {};
+        (prefsResp.result.values || []).forEach(row => { if (row[0]) newPrefs[row[0]] = row[1] || ''; });
+
+        // Process parts
+        const newPartsCache = {};
+        (partsResp.result.values || []).forEach(row => {
+          const entryId = row[0] || '';
+          const desc    = row[1] || '';
+          if (!entryId || !desc) return;
+          const part = { description: desc, part_number: row[2] || '', cost: row[3] || '', source: row[4] || '' };
+          if (!newPartsCache[entryId]) newPartsCache[entryId] = [];
+          newPartsCache[entryId].push(part);
+        });
+
+        // Atomically update all in-memory state
+        entries     = newEntries;
+        vendorList  = newVendors;
+        contactList = newContacts;
+        prefs       = newPrefs;
+        partsCache  = newPartsCache;
+
         persistToCache();
         renderAll();
-        loadAllParts(); // Background fetch — re-renders log with parts when done
         showToast('Synced');
       } catch (err) {
-        console.error('Error loading from sheet:', err);
+        console.error('Sync failed:', err);
         showToast('Sync failed — showing cached data');
       }
+    }
+
+    async function handleSyncClick() {
+      await syncFromSheets();
     }
 
     /**
@@ -1415,6 +1496,25 @@
       }
     }
 
+    async function ensureContactsData() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Contacts!A1:A1',
+        });
+        if (response.result.values?.[0]?.[0] === 'name') return;
+        const rows = [CONTACTS_COLUMNS, ...INITIAL_CONTACTS.map(c => [c])];
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId:    CONFIG.SHEET_ID,
+          range:            'Contacts!A1',
+          valueInputOption: 'RAW',
+          resource: { values: rows },
+        });
+      } catch (err) {
+        console.error('Error ensuring Contacts data:', err);
+      }
+    }
+
     async function loadPreferences() {
       try {
         const response = await gapi.client.sheets.spreadsheets.values.get({
@@ -1441,6 +1541,20 @@
       } catch (err) {
         console.error('Error loading vendors:', err);
         vendorList = [...INITIAL_VENDORS];
+      }
+    }
+
+    async function loadContacts() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Contacts!A2:A',
+        });
+        const rows = response.result.values || [];
+        contactList = rows.map(r => r[0]).filter(Boolean);
+      } catch (err) {
+        console.error('Error loading contacts:', err);
+        contactList = [...INITIAL_CONTACTS];
       }
     }
 
@@ -1742,13 +1856,12 @@
           </div>
           <div class="form-group">
             <label for="f-who">Performed by</label>
-            <select id="f-who">
-              <option>Owner</option>
-              <option>Gig Harbor Marina</option>
-              <option>ReVolt Marine Systems</option>
-              <option>Volvo Penta dealer</option>
-              <option>Other yard / contractor</option>
+            <select id="f-who" onchange="handleWhoChange(this)">
+              <option value="">— Select —</option>
+              ${contactList.map(c => `<option value="${c}">${c}</option>`).join('')}
+              <option value="Other">Other</option>
             </select>
+            <input type="text" id="f-who-other" placeholder="e.g. Specify performer" style="display:none; margin-top:4px;" />
           </div>
           <div class="form-group">
             <label for="f-cost">Cost ($)</label>
@@ -2093,7 +2206,11 @@
         entry.hours   = fn('f-hours');
         entry.system  = fv('f-system');
         entry.task    = fv('f-task');
-        entry.who     = fv('f-who');
+        const whoSel     = document.getElementById('f-who');
+        const whoOtherEl = document.getElementById('f-who-other');
+        entry.who = whoSel?.value === 'Other'
+          ? (whoOtherEl?.value.trim() || 'Other')
+          : (whoSel?.value || '');
         entry.cost    = fn('f-cost');
       }
 
@@ -2591,6 +2708,11 @@
       updatePartsCostSum();
     }
 
+    function handleWhoChange(select) {
+      const otherInput = document.getElementById('f-who-other');
+      if (otherInput) otherInput.style.display = select.value === 'Other' ? '' : 'none';
+    }
+
     function handleSourceChange(select) {
       const otherInput = select.closest('.part-source-wrap').querySelector('.part-other-source');
       otherInput.style.display = select.value === 'Other' ? '' : 'none';
@@ -2740,7 +2862,20 @@
         set('f-hours',  entry.hours);
         set('f-system', entry.system);
         set('f-task',   entry.task);
-        set('f-who',    entry.who);
+        // Pre-populate who field — match against contacts list, fall back to Other + free text
+        const whoSelect     = document.getElementById('f-who');
+        const whoOtherInput = document.getElementById('f-who-other');
+        if (entry.who && whoSelect) {
+          if (contactList.includes(entry.who)) {
+            whoSelect.value = entry.who;
+          } else {
+            whoSelect.value = 'Other';
+            if (whoOtherInput) {
+              whoOtherInput.style.display = '';
+              whoOtherInput.value = entry.who !== 'Other' ? entry.who : '';
+            }
+          }
+        }
         set('f-cost',   entry.cost);
         const parts = partsCache[String(entry.id)] || [];
         if (parts.length) {
