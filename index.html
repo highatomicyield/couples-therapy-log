@@ -788,10 +788,11 @@
     .btn-confirm-cancel:hover { background: var(--sand-dark); }
 
     /* ── Date input width fix ───────────────────────────────── */
-    /* Overrides browser intrinsic sizing so date fields respect the grid column */
+    /* iOS Safari grid items default to min-width: min-content, which for a date
+       input is the pixel width of the "MM/DD/YYYY ▼" display — wider than the
+       column. Setting min-width: 0 lets the grid column constrain it. */
     input[type="date"] {
-      width: 100%;
-      box-sizing: border-box;
+      min-width: 0;
     }
   </style>
 </head>
