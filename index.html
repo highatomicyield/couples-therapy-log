@@ -379,6 +379,17 @@
       box-shadow: var(--shadow-md);
     }
 
+    .type-btn.disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .input-calc {
+      background: var(--sand) !important;
+      cursor: default;
+    }
+
     /* ── Form fields ──────────────────────────────────────── */
     .form-grid {
       display: grid;
@@ -1053,8 +1064,15 @@
     let partsCache     = {};    // Parts rows keyed by entry id string
     let editingEntryId = null;  // Id of entry being edited; null when creating new
     let sheetIds       = {};    // Tab name → numeric sheetId (lazy-loaded for batchUpdate)
+    let prefs          = {};    // Key/value preferences loaded from Preferences tab
 
     const PARTS_COLUMNS = ['entry_id', 'description', 'part_number', 'cost', 'source'];
+
+    const PREFS_COLUMNS = ['key', 'value'];
+    const INITIAL_PREFS = [
+      ['default_location', 'Port of Brownsville'],
+      ['default_crew1',    ''],
+    ];
 
     const INITIAL_VENDORS = [
       'Boat Outfitters',
@@ -1189,7 +1207,9 @@
       await ensureSheetHeaders();
       await ensurePartsHeaders();
       await ensureVendorsData();
+      await ensurePreferencesData();
       await loadVendors();
+      await loadPreferences();
       await loadFromSheet();
     }
 
@@ -1373,6 +1393,40 @@
         });
       } catch (err) {
         console.error('Error ensuring Vendors data:', err);
+      }
+    }
+
+    async function ensurePreferencesData() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Preferences!A1:A1',
+        });
+        if (response.result.values?.[0]?.[0] === 'key') return;
+        const rows = [PREFS_COLUMNS, ...INITIAL_PREFS];
+        await gapi.client.sheets.spreadsheets.values.update({
+          spreadsheetId:    CONFIG.SHEET_ID,
+          range:            'Preferences!A1',
+          valueInputOption: 'RAW',
+          resource: { values: rows },
+        });
+      } catch (err) {
+        console.error('Error ensuring Preferences data:', err);
+      }
+    }
+
+    async function loadPreferences() {
+      try {
+        const response = await gapi.client.sheets.spreadsheets.values.get({
+          spreadsheetId: CONFIG.SHEET_ID,
+          range:         'Preferences!A2:B',
+        });
+        const rows = response.result.values || [];
+        prefs = {};
+        rows.forEach(row => { if (row[0]) prefs[row[0]] = row[1] || ''; });
+      } catch (err) {
+        console.error('Error loading preferences:', err);
+        prefs = {};
       }
     }
 
@@ -1561,6 +1615,16 @@
     // ──────────────────────────────────────────────────────────
 
     function showTab(name) {
+      // Cancel any active edit when navigating away from the New Entry tab
+      if (name !== 'new' && editingEntryId) {
+        editingEntryId = null;
+        setEditMode(false);
+        entryType = 'fuel';
+        document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+        document.querySelectorAll('.type-btn')[0]?.classList.add('selected');
+        renderForm();
+      }
+
       // Hide all panels, deactivate all tab buttons
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1587,6 +1651,7 @@
      * Called when user clicks a type button (Fuel, Waste, etc.)
      */
     function selectType(type, btn) {
+      if (editingEntryId) return;
       entryType = type;
       document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
@@ -1629,7 +1694,7 @@
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
-            <textarea id="f-notes" placeholder="Station, pump number, observations..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Station, pump number, observations..."></textarea>
           </div>`;
 
       } else if (entryType === 'waste') {
@@ -1648,7 +1713,7 @@
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
-            <textarea id="f-notes" placeholder="Station, any issues..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Station, any issues..."></textarea>
           </div>`;
 
       } else if (entryType === 'maintenance') {
@@ -1688,10 +1753,11 @@
           <div class="form-group">
             <label for="f-cost">Cost ($)</label>
             <input type="number" id="f-cost" placeholder="0.00" step="0.01" min="0" />
+            <div id="f-cost-sum-note" style="display:none; font-size:0.72rem; color:var(--text-hint); margin-top:2px;">Summed from parts</div>
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
-            <textarea id="f-notes" placeholder="Findings, observations, anything to watch..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Findings, observations, anything to watch..."></textarea>
           </div>
         </div>
         <div class="parts-section" id="parts-section">
@@ -1706,7 +1772,7 @@
         html += `
           <div class="form-group">
             <label for="f-from">Departure point</label>
-            <input type="text" id="f-from" placeholder="e.g. Bremerton Marina" />
+            <input type="text" id="f-from" placeholder="e.g. Port of Brownsville" />
           </div>
           <div class="form-group">
             <label for="f-to">Destination</label>
@@ -1736,7 +1802,7 @@
             <label>Crew / pets</label>
             <div id="crew-list">
               <div class="crew-row">
-                <input type="text" class="crew-name" placeholder="Crew member / pet" />
+                <input type="text" class="crew-name" placeholder="e.g. Crew member / pet" />
                 <button type="button" class="btn-remove-row" onclick="removeCrewField(this)" title="Remove">×</button>
               </div>
             </div>
@@ -1753,7 +1819,7 @@
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes / waypoints / highlights</label>
-            <textarea id="f-notes" placeholder="Route, anchorages, observations, highlights..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Route, anchorages, observations, highlights..."></textarea>
           </div>`;
 
       } else if (entryType === 'systems') {
@@ -1880,7 +1946,7 @@
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
-            <textarea id="f-notes" placeholder="Any issues, leaks, or items to watch..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Any issues, leaks, or items to watch..."></textarea>
           </div>`;
 
       } else {
@@ -1888,7 +1954,7 @@
         html += `
           <div class="form-group full">
             <label for="f-notes">Note</label>
-            <textarea id="f-notes" placeholder="Anchoring spot, weather, incident, observation..."></textarea>
+            <textarea id="f-notes" placeholder="e.g. Anchoring spot, weather, incident, observation..."></textarea>
           </div>`;
       }
 
@@ -1896,6 +1962,34 @@
       if (entryType !== 'maintenance') html += '</div>';
       wrap.innerHTML = html;
       attachCalcListeners();
+
+      // Apply preference defaults to pre-fill fields (black text, not placeholder)
+      if (entryType !== 'trip' && prefs['default_location']) {
+        const locEl = document.getElementById('f-location');
+        if (locEl) locEl.value = prefs['default_location'];
+      }
+      if (entryType === 'trip') {
+        // Device-specific sticky default: last saved destination pre-fills departure point.
+        // Known limitation: does not sync across devices — each device tracks its own last destination.
+        const lastDest = localStorage.getItem('ct_last_destination');
+        if (lastDest) {
+          const fromEl = document.getElementById('f-from');
+          if (fromEl) fromEl.value = lastDest;
+        }
+        if (prefs['default_crew1']) {
+          const firstCrew = document.querySelector('#crew-list .crew-name');
+          if (firstCrew) firstCrew.value = prefs['default_crew1'];
+        }
+      }
+
+      // Select-all on focus for pre-filled fields so first keystroke replaces the value
+      const selectAll = el => { if (el) el.addEventListener('focus', function() { this.select(); }); };
+      if (entryType !== 'trip') selectAll(document.getElementById('f-location'));
+      if (entryType === 'trip') {
+        selectAll(document.getElementById('f-from'));
+        selectAll(document.querySelector('#crew-list .crew-name'));
+      }
+      if (entryType === 'waste') selectAll(document.getElementById('f-cost'));
     }
 
     function attachCalcListeners() {
@@ -2040,6 +2134,11 @@
         entry.fwdPump          = fv('f-fwdpump');
       }
 
+      // Device-specific sticky default: save last trip destination for next departure pre-fill
+      if (entryType === 'trip' && entry.to) {
+        localStorage.setItem('ct_last_destination', entry.to);
+      }
+
       if (editingEntryId) {
         // ── Update existing entry ──────────────────────────
         try {
@@ -2068,6 +2167,7 @@
           renderForm();
           renderAll();
           showToast('Entry updated');
+          showTab('log');
         } catch (err) {
           console.error('Update failed:', err);
           showToast('Update failed — changes not saved');
@@ -2458,6 +2558,7 @@
       document.getElementById('btn-add-parts').style.display = 'none';
       document.getElementById('parts-expanded').style.display = '';
       addPartRow(); // Start with one empty row
+      updatePartsCostSum(); // Lock cost field now that parts section is active
     }
 
     function addPartRow() {
@@ -2469,8 +2570,8 @@
       const row = document.createElement('div');
       row.className = 'part-row';
       row.innerHTML = `
-        <input type="text"   class="part-desc"  placeholder="Description *" />
-        <input type="text"   class="part-num"   placeholder="Part number" />
+        <input type="text"   class="part-desc"  placeholder="e.g. Description *" />
+        <input type="text"   class="part-num"   placeholder="e.g. Part number" />
         <input type="number" class="part-cost"  placeholder="Cost $" step="0.01" min="0" />
         <div class="part-source-wrap">
           <select class="part-source" onchange="handleSourceChange(this)">
@@ -2478,19 +2579,45 @@
             ${vendorOptions}
             <option value="Other">Other</option>
           </select>
-          <input type="text" class="part-other-source" placeholder="Specify vendor" style="display:none" />
+          <input type="text" class="part-other-source" placeholder="e.g. Specify vendor" style="display:none" />
         </div>
         <button type="button" class="btn-remove-row" onclick="removePartRow(this)" title="Remove">×</button>`;
       list.appendChild(row);
+      row.querySelector('.part-cost').addEventListener('blur', updatePartsCostSum);
     }
 
     function removePartRow(btn) {
       btn.closest('.part-row').remove();
+      updatePartsCostSum();
     }
 
     function handleSourceChange(select) {
       const otherInput = select.closest('.part-source-wrap').querySelector('.part-other-source');
       otherInput.style.display = select.value === 'Other' ? '' : 'none';
+    }
+
+    // Labor and taxes can be added as part line items with descriptions like "Labor" or "Tax".
+    // They sum into the total cost field like any other part — no special handling needed.
+    function updatePartsCostSum() {
+      const costEl = document.getElementById('f-cost');
+      const noteEl = document.getElementById('f-cost-sum-note');
+      if (!costEl) return;
+      const costInputs = document.querySelectorAll('#parts-list .part-cost');
+      if (!costInputs.length) {
+        costEl.readOnly = false;
+        costEl.classList.remove('input-calc');
+        if (noteEl) noteEl.style.display = 'none';
+        return;
+      }
+      let sum = 0;
+      costInputs.forEach(input => {
+        const v = parseFloat(input.value);
+        if (!isNaN(v)) sum += v;
+      });
+      costEl.value = sum.toFixed(2);
+      costEl.readOnly = true;
+      costEl.classList.add('input-calc');
+      if (noteEl) noteEl.style.display = '';
     }
 
     function collectParts() {
@@ -2518,7 +2645,7 @@
       const row = document.createElement('div');
       row.className = 'crew-row';
       row.innerHTML = `
-        <input type="text" class="crew-name" placeholder="Crew member / pet" />
+        <input type="text" class="crew-name" placeholder="e.g. Crew member / pet" />
         <button type="button" class="btn-remove-row" onclick="removeCrewField(this)" title="Remove">×</button>`;
       list.appendChild(row);
     }
@@ -2540,6 +2667,7 @@
     function setEditMode(editing) {
       document.querySelector('.btn-save').textContent = editing ? 'Update Entry' : 'Save Entry';
       document.getElementById('edit-actions').style.display = editing ? 'flex' : 'none';
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('disabled', editing));
     }
 
     /**
@@ -2637,6 +2765,7 @@
               }
             }
           });
+          updatePartsCostSum(); // Initialize auto-sum display for pre-loaded parts
         }
       }
 
@@ -2727,6 +2856,7 @@
         renderForm();
         renderAll();
         showToast('Entry deleted');
+        showTab('log');
       } catch (err) {
         console.error('Delete failed:', err);
         showToast('Delete failed — entry not removed');
