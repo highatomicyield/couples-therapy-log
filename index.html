@@ -399,6 +399,7 @@
 
     .form-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     .form-group.full { grid-column: 1 / -1; }
+    .form-grid > .form-group:first-child { grid-column: 1; }
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
@@ -587,6 +588,8 @@
 
     /* ── Responsive ───────────────────────────────────────── */
     @media (max-width: 600px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .form-group.full { grid-column: 1; }
       .type-grid { grid-template-columns: repeat(2, 1fr); }
       .header-inner { flex-direction: column; align-items: flex-start; gap: 4px; }
       .hours-display { text-align: left; }
