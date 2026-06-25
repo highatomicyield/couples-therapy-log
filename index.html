@@ -399,7 +399,7 @@
 
     .form-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     .form-group.full { grid-column: 1 / -1; }
-    .form-grid > .form-group:first-child { grid-column: 1; overflow: hidden; }
+    .form-grid > .form-group:first-child { grid-column: 1; }
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type=number] { -moz-appearance: textfield; }
@@ -795,6 +795,7 @@
     input[type="date"] {
       min-width: 0;
       max-width: 100%;
+      overflow: hidden;
     }
   </style>
 </head>
