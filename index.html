@@ -1800,6 +1800,10 @@
       const dateEl = document.getElementById('f-date');
       if (!dateEl) return;
 
+      // Ensure the numeric keypad shows on iOS. Cleave.js does not set this and
+      // does not conflict with it — safe to (re)apply alongside initialization.
+      dateEl.setAttribute('inputmode', 'numeric');
+
       const today = new Date();
       const mm   = String(today.getMonth() + 1).padStart(2, '0');
       const dd   = String(today.getDate()).padStart(2, '0');
@@ -1836,7 +1840,7 @@
       let html = `<div class="form-grid">
         <div class="form-group">
           <label for="f-date">Date</label>
-          <input type="text" id="f-date" placeholder="MM/DD/YYYY" autocomplete="off" />
+          <input type="text" id="f-date" inputmode="numeric" placeholder="MM/DD/YYYY" autocomplete="off" />
         </div>
         ${entryType !== 'trip' ? `<div class="form-group">
           <label for="f-location">Location / marina</label>
