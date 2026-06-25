@@ -788,15 +788,10 @@
 
     .btn-confirm-cancel:hover { background: var(--sand-dark); }
 
-    /* ── Date input width fix ───────────────────────────────── */
-    /* iOS Safari grid items default to min-width: min-content, which for a date
-       input is the pixel width of the "MM/DD/YYYY ▼" display — wider than the
-       column. Setting min-width: 0 lets the grid column constrain it. */
-    input[type="date"] {
-      min-width: 0;
-      max-width: 100%;
-      overflow: hidden;
-    }
+    /* The date field is a plain text input masked by Cleave.js (MM/DD/YYYY),
+       which sidesteps the iOS intrinsic-min-width issue that native
+       input[type="date"] suffered in this two-column grid. No special CSS
+       needed — it sizes like every other text input. */
   </style>
 </head>
 
@@ -1006,6 +1001,7 @@
 
   <!-- ── External libraries ───────────────────────────────── -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cleave.js/1.6.0/cleave.min.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer
     onload="if(typeof initGSI==='function') initGSI()"></script>
   <script src="https://apis.google.com/js/api.js"
@@ -1094,6 +1090,7 @@
     let sheetIds       = {};    // Tab name → numeric sheetId (lazy-loaded for batchUpdate)
     let prefs          = {};    // Key/value preferences loaded from Preferences tab
     let contactList    = [];    // Contact names loaded from Contacts tab
+    let cleaveDateInstance = null; // Cleave.js instance bound to #f-date (recreated each renderForm)
 
     const PARTS_COLUMNS = ['entry_id', 'description', 'part_number', 'cost', 'source'];
 
@@ -1777,18 +1774,69 @@
     }
 
     /**
+     * Convert a YYYY-MM-DD storage date to the MMDDYYYY raw digit string
+     * Cleave.js expects in setRawValue(). Returns '' for malformed input.
+     */
+    function storageToRaw(yyyymmdd) {
+      const parts = String(yyyymmdd || '').split('-');
+      if (parts.length !== 3) return '';
+      return `${parts[1]}${parts[2]}${parts[0]}`; // MMDDYYYY
+    }
+
+    /**
+     * Attach the Cleave.js MM/DD/YYYY mask to the #f-date field and pre-fill
+     * today's date. Must run after renderForm() writes the form HTML, since the
+     * element must exist. The instance is destroyed and recreated on each call
+     * so we never stack multiple masks on the same element.
+     *
+     * Graceful degradation: if Cleave.js failed to load (offline), the field
+     * stays a plain text input and we pre-fill today's date directly.
+     */
+    function initDateMask() {
+      if (cleaveDateInstance) {
+        cleaveDateInstance.destroy();
+        cleaveDateInstance = null;
+      }
+      const dateEl = document.getElementById('f-date');
+      if (!dateEl) return;
+
+      const today = new Date();
+      const mm   = String(today.getMonth() + 1).padStart(2, '0');
+      const dd   = String(today.getDate()).padStart(2, '0');
+      const yyyy = today.getFullYear();
+
+      if (typeof Cleave === 'undefined') {
+        // Offline fallback — plain text input, MM/DD/YYYY default
+        dateEl.value = `${mm}/${dd}/${yyyy}`;
+        dateEl.addEventListener('focus', function() { this.select(); });
+        return;
+      }
+
+      cleaveDateInstance = new Cleave('#f-date', {
+        date: true,
+        datePattern: ['m', 'd', 'Y'],
+        delimiter: '/',
+      });
+      // Cleave inserts the slashes — pass digits only
+      cleaveDateInstance.setRawValue(`${mm}${dd}${yyyy}`);
+
+      // Select-all on focus: first keystroke replaces the pre-filled date,
+      // and Cleave reformats from that digit forward through the mask.
+      dateEl.addEventListener('focus', function() { this.select(); });
+    }
+
+    /**
      * Builds the form fields for the currently selected entry type.
      * Uses template literals to construct HTML strings.
      */
     function renderForm() {
-      const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
-      const wrap  = document.getElementById('entry-form-wrap');
+      const wrap = document.getElementById('entry-form-wrap');
 
       // Common fields every entry type shares
       let html = `<div class="form-grid">
         <div class="form-group">
           <label for="f-date">Date</label>
-          <input type="date" id="f-date" value="${today}" />
+          <input type="text" id="f-date" placeholder="MM/DD/YYYY" autocomplete="off" />
         </div>
         ${entryType !== 'trip' ? `<div class="form-group">
           <label for="f-location">Location / marina</label>
@@ -1800,15 +1848,15 @@
         html += `
           <div class="form-group">
             <label for="f-gallons">Gallons added</label>
-            <input type="number" id="f-gallons" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-gallons" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-pricegal">Price per gallon ($)</label>
-            <input type="number" id="f-pricegal" placeholder="0.00" step="0.01" min="0" />
+            <input type="number" id="f-pricegal" inputmode="decimal" placeholder="0.00" step="0.01" min="0" />
           </div>
           <div class="form-group">
             <label for="f-hours">Engine hours at fill</label>
-            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-hours" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
@@ -1827,7 +1875,7 @@
           </div>
           <div class="form-group">
             <label for="f-cost">Cost ($)</label>
-            <input type="number" id="f-cost" value="0.00" step="0.01" min="0" />
+            <input type="number" id="f-cost" inputmode="decimal" value="0.00" step="0.01" min="0" />
           </div>
           <div class="form-group full">
             <label for="f-notes">Notes</label>
@@ -1838,7 +1886,7 @@
         html += `
           <div class="form-group">
             <label for="f-hours">Engine hours</label>
-            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-hours" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-system">System</label>
@@ -1869,7 +1917,7 @@
           </div>
           <div class="form-group">
             <label for="f-cost">Cost ($)</label>
-            <input type="number" id="f-cost" placeholder="0.00" step="0.01" min="0" />
+            <input type="number" id="f-cost" inputmode="decimal" placeholder="0.00" step="0.01" min="0" />
             <div id="f-cost-sum-note" style="display:none; font-size:0.72rem; color:var(--text-hint); margin-top:2px;">Summed from parts</div>
           </div>
           <div class="form-group full">
@@ -1897,23 +1945,23 @@
           </div>
           <div class="form-group">
             <label for="f-hrsstart">Engine hours — start</label>
-            <input type="number" id="f-hrsstart" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-hrsstart" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-hrsend">Engine hours — end</label>
-            <input type="number" id="f-hrsend" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-hrsend" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-distance">Distance (nm)</label>
-            <input type="number" id="f-distance" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-distance" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-fuelstart">Fuel level — start (gal)</label>
-            <input type="number" id="f-fuelstart" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-fuelstart" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-fuelend">Fuel level — end (gal)</label>
-            <input type="number" id="f-fuelend" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-fuelend" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group full" id="crew-section">
             <label>Crew / pets</label>
@@ -1951,11 +1999,11 @@
           </div>
           <div class="form-group">
             <label for="f-hours">Engine hours</label>
-            <input type="number" id="f-hours" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-hours" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-fuellevel">Fuel level (gal)</label>
-            <input type="number" id="f-fuellevel" placeholder="0" step="1" min="0" />
+            <input type="number" id="f-fuellevel" inputmode="decimal" placeholder="0" step="1" min="0" />
           </div>
           <div class="form-group">
             <label for="f-elec1status">Chartplotter</label>
@@ -1983,11 +2031,11 @@
           </div>
           <div class="form-group">
             <label for="f-voltage">House bank voltage (V)</label>
-            <input type="number" id="f-voltage" placeholder="12.6" step="0.01" min="0" />
+            <input type="number" id="f-voltage" inputmode="decimal" placeholder="12.6" step="0.01" min="0" />
           </div>
           <div class="form-group">
             <label for="f-soc">House bank SOC (%)</label>
-            <input type="number" id="f-soc" placeholder="100" step="1" min="0" max="100" />
+            <input type="number" id="f-soc" inputmode="numeric" placeholder="100" step="1" min="0" max="100" />
           </div>
           <div class="form-group">
             <label for="f-freshwater">Freshwater level</label>
@@ -2078,6 +2126,7 @@
       // maintenance closes its own form-grid before the parts section
       if (entryType !== 'maintenance') html += '</div>';
       wrap.innerHTML = html;
+      initDateMask();          // Attach Cleave.js mask + today's default to #f-date
       attachCalcListeners();
 
       // Apply preference defaults to pre-fill fields (black text, not placeholder)
@@ -2180,11 +2229,29 @@
         return;
       }
 
+      // Resolve and validate the date, converting MM/DD/YYYY input → YYYY-MM-DD
+      // storage format (the format every sort/compare/display elsewhere expects).
+      let storageDate;
+      if (cleaveDateInstance) {
+        const raw = cleaveDateInstance.getRawValue(); // MMDDYYYY, digits only
+        if (raw.length !== 8) {
+          showToast('Please enter a complete date (MM/DD/YYYY)');
+          document.getElementById('f-date')?.focus();
+          return; // abort save
+        }
+        storageDate = `${raw.slice(4)}-${raw.slice(0, 2)}-${raw.slice(2, 4)}`;
+      } else {
+        // Offline fallback (Cleave unavailable): accept typed MM/DD/YYYY text
+        const txt = fv('f-date');
+        const m = txt.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        storageDate = m ? `${m[3]}-${m[1]}-${m[2]}` : (txt || new Date().toISOString().split('T')[0]);
+      }
+
       // Build the base entry object — fields common to all types
       const entry = {
         id:       editingEntryId || Date.now(), // Preserve id when editing
         type:     entryType,
-        date:     fv('f-date') || new Date().toISOString().split('T')[0],
+        date:     storageDate,
         location: fv('f-location'),
         notes:    fv('f-notes'),
       };
@@ -2693,7 +2760,7 @@
       row.innerHTML = `
         <input type="text"   class="part-desc"  placeholder="e.g. Description *" />
         <input type="text"   class="part-num"   placeholder="e.g. Part number" />
-        <input type="number" class="part-cost"  placeholder="Cost $" step="0.01" min="0" />
+        <input type="number" class="part-cost"  inputmode="decimal" placeholder="Cost $" step="0.01" min="0" />
         <div class="part-source-wrap">
           <select class="part-source" onchange="handleSourceChange(this)">
             <option value="">— Source —</option>
@@ -2844,7 +2911,13 @@
         if (el && val !== undefined && val !== null) el.value = val;
       };
 
-      set('f-date',     entry.date);
+      // Date is masked by Cleave — set via raw digits, not direct DOM value.
+      // (renderForm already ran initDateMask, so the instance exists when online.)
+      if (cleaveDateInstance && entry.date) {
+        cleaveDateInstance.setRawValue(storageToRaw(entry.date));
+      } else {
+        set('f-date', entry.date);
+      }
       set('f-location', entry.location);
       set('f-notes',    entry.notes);
 
